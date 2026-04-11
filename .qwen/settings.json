@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(github.com)",
+      "WebFetch(www.reddit.com)"
+    ]
+  },
+  "$version": 3
+}

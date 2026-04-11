@@ -1,0 +1,12 @@
+# ==========================================
+# RAG Such-Konfiguration
+# ==========================================
+
+# 1. Welche Dateiendungen sollen indiziert werden? (Whiteliste)
+WHITELIST_EXT=("*.md" "*.txt")
+
+# 2. Sollen versteckte Dateien und Ordner (z.B. .git) ignoriert werden?
+IGNORE_HIDDEN=true
+
+# 3. Ordner, die immer ignoriert werden sollen (Blacklist)
+IGNORE_DIRS=("node_modules" "venv" ".git" ".ragindex" "dist" "build")

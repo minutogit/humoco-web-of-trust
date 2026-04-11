@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web of Trust Simulator</title>
+    <!-- Cytoscape.js for graph visualization -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --panel-bg: #161b22;
+            --text-color: #c9d1d9;
+            --border-color: #30363d;
+            --accent-color: #58a6ff;
+            --accent-hover: #3182ce;
+            
+            /* Node Colors */
+            --color-me: #ffd700;
+            --color-high: #238636;  /* >80% */
+            --color-med: #2ea043;   /* >50% */
+            --color-low: #d29922;   /* >20% */
+            --color-zero: #484f58;  /* Grau */
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #sidebar {
+            width: 320px;
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border-color);
+            padding: 24px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            z-index: 10;
+            box-shadow: 4px 0 15px rgba(0,0,0,0.3);
+            overflow-y: auto;
+        }
+
+        #cy {
+            flex-grow: 1;
+            position: relative;
+        }
+
+        h1 {
+            font-size: 22px;
+            margin: 0;
+            font-weight: 600;
+            color: #fff;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .help-icon {
+            width: 18px;
+            height: 18px;
+            background: #58a6ff;
+            color: #000;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: help;
+            flex-shrink: 0;
+        }
+
+        .tooltip {
+            position: relative;
+        }
+
+        .tooltip .tooltip-text {
+            visibility: hidden;
+            background: #161b22;
+            color: #c9d1d9;
+            text-align: left;
+            border-radius: 6px;
+            padding: 12px;
+            position: absolute;
+            z-index: 100;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 280px;
+            font-size: 12px;
+            line-height: 1.5;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            opacity: 0;
+            transition: opacity 0.3s;
+            margin-top: 8px;
+        }
+
+        .tooltip .tooltip-text::after {
+            content: "";
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: transparent transparent var(--border-color) transparent;
+        }
+
+        .tooltip:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        input[type="number"], select {
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 10px;
+            border-radius: 6px;
+            outline: none;
+            font-size: 14px;
+            font-family: 'Inter', sans-serif;
+            transition: border-color 0.2s;
+        }
+
+        input[type="number"]:focus, select:focus {
+            border-color: var(--accent-color);
+        }
+
+        button {
+            background: var(--accent-color);
+            color: #000;
+            border: none;
+            padding: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: transform 0.1s, background 0.2s;
+            margin-top: 6px;
+        }
+
+        button:hover {
+            background: var(--accent-hover);
+            color: #fff;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        .section-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #8b949e;
+            margin-top: 10px;
+            margin-bottom: -10px;
+        }
+
+        .legend {
+            margin-top: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 13px;
+        }
+
+        .color-box {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .node-me { background: var(--color-me); box-shadow: 0 0 8px var(--color-me); }
+        .node-high { background: var(--color-high); }
+        .node-med { background: var(--color-med); }
+        .node-low { background: var(--color-low); }
+        .node-zero { background: var(--color-zero); }
+
+        .edge-line {
+            width: 20px;
+            height: 3px;
+            border-radius: 2px;
+        }
+
+        .edge-85 { background: #9b59b6; height: 4px; }
+        .edge-60 { background: #3498db; height: 3px; }
+        .edge-30 { background: #7f8c8d; height: 2px; }
+    </style>
+</head>
+<body oncontextmenu="return false;">
+
+    <div id="sidebar">
+        <h1>
+            WoT Simulator
+            <div class="tooltip">
+                <div class="help-icon">?</div>
+                <div class="tooltip-text">
+                    <strong>Bedienung:</strong><br>
+                    • Klick auf Kante: Vertrauensstufe ändern<br>
+                    • Rechtsklick auf Kante: Entfernen<br>
+                    • Zwei Knoten anklicken: Neue Kante erstellen<br>
+                    • Rechtsklick auf Knoten: Kürzesten Pfad vom "ICH" zum Knoten anzeigen<br>
+                    • Mausrad: Zoomen<br>
+                    • Ziehen: Knoten verschieben<br><br>
+                    <strong>Vertrauensberechnung:</strong><br>
+                    Prozente ergeben sich aus allen Pfaden vom "ICH" zum Knoten. Mehrere Pfade erhöhen das Vertrauen (Wahrscheinlichkeit, dass mindestens einer vertrauenswürdig ist).
+                </div>
+            </div>
+        </h1>
+        
+        <div class="control-group">
+            <label for="nodeCount">Anzahl der Knoten</label>
+            <input type="number" id="nodeCount" value="50" min="10" max="500">
+        </div>
+
+        <div class="control-group">
+            <label for="density">Vernetzungsgrad (Dichte)</label>
+            <select id="density">
+                <option value="2">Niedrig (Lockere Gruppen)</option>
+                <option value="4" selected>Mittel (Reale Netzwerke)</option>
+                <option value="6">Hoch (Dichte Cluster)</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="bidirectionalProb">Bidirektionale Kanten (%)</label>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <input type="range" id="bidirectionalProb" value="90" min="0" max="100" style="flex-grow: 1;" oninput="document.getElementById('biProbVal').innerText = this.value + '%'">
+                <span id="biProbVal" style="font-size: 14px; width: 35px; text-align: right; color: var(--accent-color); font-weight: bold;">90%</span>
+            </div>
+        </div>
+
+        <button onclick="runSimulation()">Netzwerk generieren</button>
+<button onclick="makePlanar()" style="background: #e74c3c; margin-top: 3px;">Planar machen</button>
+
+        <div class="section-title">Kantengewichte (in %)</div>
+        <div class="control-group" style="flex-direction: row; gap: 8px;">
+            <div style="flex:1;">
+                <label for="lvlLow" style="font-size:12px;">Bekannter</label>
+                <input type="number" id="lvlLow" value="30" min="0" max="100" style="width: 100%; box-sizing: border-box; text-align: center;">
+            </div>
+            <div style="flex:1;">
+                <label for="lvlMed" style="font-size:12px;">Kontakt</label>
+                <input type="number" id="lvlMed" value="60" min="0" max="100" style="width: 100%; box-sizing: border-box; text-align: center;">
+            </div>
+            <div style="flex:1;">
+                <label for="lvlHigh" style="font-size:12px;">Vertrauter</label>
+                <input type="number" id="lvlHigh" value="85" min="0" max="100" style="width: 100%; box-sizing: border-box; text-align: center;">
+            </div>
+        </div>
+        
+        <button onclick="updateEdgeWeightsAndRecalculate()" style="background: #2ea043; margin-top: 3px;">Neu berechnen</button>
+
+        <div class="section-title">Kanten-Statistik</div>
+        <div style="display: flex; flex-direction: column; gap: 4px; font-size: 13px;">
+            <div style="display: flex; justify-content: space-between;"><span>Vertrauter (<span id="lblStatHigh">85%</span>):</span><span id="statEdgeHigh" style="font-weight:bold;">0</span></div>
+            <div style="display: flex; justify-content: space-between;"><span>Kontakt (<span id="lblStatMed">60%</span>):</span><span id="statEdgeMed" style="font-weight:bold;">0</span></div>
+            <div style="display: flex; justify-content: space-between;"><span>Bekannter (<span id="lblStatLow">30%</span>):</span><span id="statEdgeLow" style="font-weight:bold;">0</span></div>
+        </div>
+
+        <div class="section-title">Vertrauens-Verteilung</div>
+        <div id="trustChart" style="display: flex; flex-direction: column; gap: 4px; font-size: 11px; margin-bottom: 5px;"></div>
+
+        <div class="section-title">Legende (Knoten-Vertrauen)</div>
+        <div class="legend">
+            <div class="legend-item"><div class="color-box node-me"></div> "ICH" (Startpunkt, 100%)</div>
+            <div class="legend-item"><div class="color-box" style="background: #2ecc71"></div> 100% (Hohes Vertrauen)</div>
+            <div class="legend-item"><div class="color-box" style="background: #f1c40f"></div> ~50% (Mittleres Vertrauen)</div>
+            <div class="legend-item"><div class="color-box" style="background: #e74c3c"></div> 0% / Unverbunden</div>
+        </div>
+
+        <div class="section-title">Legende (Kanten-Dämpfung)</div>
+        <div class="legend" style="margin-top: 0;">
+            <div class="legend-item"><div class="edge-line edge-85"></div> Vertrauter</div>
+            <div class="legend-item"><div class="edge-line edge-60"></div> Kontakt</div>
+            <div class="legend-item"><div class="edge-line edge-30"></div> Bekannter</div>
+        </div>
+    </div>
+
+    <!-- Container for Cytoscape -->
+    <div id="cy"></div>
+
+    <script>
+        let cy;
+        let currentStartId = null;
+        let highlightedPathEdges = [];
+
+        // Dynamic Trust Levels
+        let LEVELS = [
+            { prob: 0.70, factor: 0.30, label: "30%", color: "#7f8c8d", width: 1, tier: 0 },  // Low
+            { prob: 0.20, factor: 0.60, label: "60%", color: "#3498db", width: 2, tier: 1 },  // Medium
+            { prob: 0.10, factor: 0.85, label: "85%", color: "#9b59b6", width: 3.5, tier: 2 } // High
+        ];
+
+        function readEdgeWeightsFromUI() {
+            let valLow = parseInt(document.getElementById('lvlLow').value) || 0;
+            let valMed = parseInt(document.getElementById('lvlMed').value) || 0;
+            let valHigh = parseInt(document.getElementById('lvlHigh').value) || 0;
+            
+            LEVELS[0].factor = valLow / 100.0; LEVELS[0].label = valLow + "%";
+            LEVELS[1].factor = valMed / 100.0; LEVELS[1].label = valMed + "%";
+            LEVELS[2].factor = valHigh / 100.0; LEVELS[2].label = valHigh + "%";
+        }
+
+        function updateEdgeWeightsAndRecalculate() {
+            readEdgeWeightsFromUI();
+            
+            if (cy) {
+                cy.batch(() => {
+                    cy.edges().forEach(ele => {
+                        let t = ele.data('tier');
+                        if (t >= 0 && t <= 2) {
+                            ele.data('factor', LEVELS[t].factor);
+                            ele.data('label', LEVELS[t].label);
+                        }
+                    });
+                });
+                recalculateTrust();
+            }
+        }
+
+        // Pick a random trust level based on probabilities
+        function getRandomTrustLevel() {
+            let rand = Math.random();
+            let cum = 0;
+            for (let lvl of LEVELS) {
+                cum += lvl.prob;
+                if (rand <= cum) return lvl;
+            }
+            return LEVELS[0];
+        }
+
+        // Feature 1: Realistic Network Generation (Watts-Strogatz adapted for clusters)
+        function generateGraphData(numNodes, K, biProb) {
+            let nodes = [];
+            let edges = [];
+            const beta = 0.15; // Rewiring probability to create shortcuts/hubs
+
+            // Create nodes
+            for (let i = 0; i < numNodes; i++) {
+                nodes.push({ data: { id: 'n' + i, label: '', trustVal: 0 } });
+            }
+
+            let edgeMap = new Set();
+            function addEdge(source, target, forceBi) {
+                if (source === target) return;
+                let key1 = `${source}->${target}`;
+                let key2 = `${target}->${source}`;
+                
+                if (edgeMap.has(key1) || edgeMap.has(key2)) return;
+                
+                let level = getRandomTrustLevel();
+                let isBidirectional = forceBi || (Math.random() < biProb);
+                
+                edges.push({
+                    data: {
+                        id: key1,
+                        source: source,
+                        target: target,
+                        tier: level.tier,
+                        factor: level.factor,
+                        label: level.label,
+                        color: level.color,
+                        width: level.width,
+                        isBidirectional: isBidirectional
+                    }
+                });
+                edgeMap.add(key1);
+                if (isBidirectional) edgeMap.add(key2);
+            }
+
+            // 1. Create a ring lattice (Local clusters)
+            for (let i = 0; i < numNodes; i++) {
+                for (let j = 1; j <= K / 2; j++) {
+                    let target = (i + j) % numNodes;
+                    
+                    // Add edge.
+                    addEdge('n' + i, 'n' + target, false);
+
+                    // 2. Chance to rewire (Creates Small-World shortcuts/hubs)
+                    if (Math.random() < beta) {
+                        let randomNode = 'n' + Math.floor(Math.random() * numNodes);
+                        addEdge('n' + i, randomNode);
+                    }
+                }
+            }
+
+            return { nodes, edges };
+        }
+
+        // Node coloring with smooth gradient
+        function getNodeColor(ele) {
+            if (ele.data('isStart')) return '#ffd700'; // Gold
+            let val = ele.data('trustVal');
+            
+            if (val === 0) return '#e74c3c'; // Rot für 0%
+
+            const colors = [
+                { pct: 0.0, rgb: [231, 76, 60] },    // #e74c3c (Red)
+                { pct: 0.5, rgb: [241, 196, 15] },   // #f1c40f (Yellow)
+                { pct: 1.0, rgb: [46, 204, 113] }    // #2ecc71 (Green)
+            ];
+
+            let i = 1;
+            while (i < colors.length - 1 && val > colors[i].pct) {
+                i++;
+            }
+            
+            let lower = colors[i - 1];
+            let upper = colors[i];
+            
+            let range = upper.pct - lower.pct;
+            let rangePct = range === 0 ? 0 : (val - lower.pct) / range;
+            rangePct = Math.max(0, Math.min(1, rangePct));
+            
+            let r = Math.round(lower.rgb[0] + rangePct * (upper.rgb[0] - lower.rgb[0]));
+            let g = Math.round(lower.rgb[1] + rangePct * (upper.rgb[1] - lower.rgb[1]));
+            let b = Math.round(lower.rgb[2] + rangePct * (upper.rgb[2] - lower.rgb[2]));
+            
+            return `rgb(${r}, ${g}, ${b})`;
+        }
+
+        // Calculate text color based on background brightness
+        function getTextColor(ele) {
+            let color = getNodeColor(ele);
+            
+            let r, g, b;
+            
+            // Parse hex color
+            if (color.startsWith('#')) {
+                let hex = color.substring(1);
+                if (hex.length === 3) {
+                    r = parseInt(hex[0] + hex[0], 16);
+                    g = parseInt(hex[1] + hex[1], 16);
+                    b = parseInt(hex[2] + hex[2], 16);
+                } else if (hex.length === 6) {
+                    r = parseInt(hex.substring(0, 2), 16);
+                    g = parseInt(hex.substring(2, 4), 16);
+                    b = parseInt(hex.substring(4, 6), 16);
+                } else {
+                    return '#fff';
+                }
+            }
+            // Parse RGB values
+            else {
+                let match = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+                if (!match) return '#fff';
+                
+                r = parseInt(match[1]);
+                g = parseInt(match[2]);
+                b = parseInt(match[3]);
+            }
+            
+            // Calculate luminance using standard formula
+            let luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+            
+            // Use black text for bright backgrounds, white for dark backgrounds
+            return luminance > 128 ? '#000' : '#fff';
+        }
+
+        // Feature 4: Interactive Recalculation
+        function recalculateTrust() {
+            if (!cy || !currentStartId) return;
+            const MAX_DEPTH = 4;
+            let pathsToNode = {};
+            let adjacency = {};
+            
+            let cyEdges = cy.edges();
+            for(let i=0; i<cyEdges.length; i++) {
+                let e = cyEdges[i];
+                let src = e.data('source');
+                let tgt = e.data('target');
+                let factor = e.data('factor');
+                
+                if (!adjacency[src]) adjacency[src] = [];
+                adjacency[src].push({ target: tgt, factor: factor });
+                
+                if (e.data('isBidirectional')) {
+                    if (!adjacency[tgt]) adjacency[tgt] = [];
+                    adjacency[tgt].push({ target: src, factor: factor });
+                }
+            }
+            
+            // 1. BFS to determine topological shortest paths (Hops) for ALL connected nodes
+            let shortestHops = {};
+            let queue = [ { id: currentStartId, hops: 0 } ];
+            let visitedBfs = new Set([currentStartId]);
+            shortestHops[currentStartId] = 0;
+            
+            while(queue.length > 0) {
+                let curr = queue.shift();
+                if (adjacency[curr.id]) {
+                    for (let edge of adjacency[curr.id]) {
+                        if (!visitedBfs.has(edge.target)) {
+                            visitedBfs.add(edge.target);
+                            shortestHops[edge.target] = curr.hops + 1;
+                            queue.push({ id: edge.target, hops: curr.hops + 1 });
+                        }
+                    }
+                }
+            }
+            
+            // 2. DFS mapped to MAX_DEPTH to calculate the MultiPath Trust-Heuristic
+            function findPaths(currentId, currentTrust, visited) {
+                if (visited.size > MAX_DEPTH + 1) return;
+                
+                if (currentId !== currentStartId && currentTrust > 0) {
+                    if (!pathsToNode[currentId]) pathsToNode[currentId] = [];
+                    pathsToNode[currentId].push(currentTrust);
+                }
+                
+                if (!adjacency[currentId]) return;
+                
+                for (let edge of adjacency[currentId]) {
+                    if (!visited.has(edge.target)) {
+                        visited.add(edge.target);
+                        findPaths(edge.target, currentTrust * edge.factor, visited);
+                        visited.delete(edge.target);
+                    }
+                }
+            }
+            
+            findPaths(currentStartId, 1.0, new Set([currentStartId]));
+            let finalTrusts = {};
+            finalTrusts[currentStartId] = 1.0;
+            
+            for (let nodeId in pathsToNode) {
+                let probs = pathsToNode[nodeId];
+                let combinedInverse = 1.0;
+                for (let p of probs) { combinedInverse *= (1 - p); }
+                finalTrusts[nodeId] = 1.0 - combinedInverse;
+            }
+            
+            cy.batch(() => {
+                cy.nodes().forEach(n => {
+                    let id = n.id();
+                    let p = finalTrusts[id] || 0;
+                    n.data('trustVal', p);
+                    
+                    if (id === currentStartId) {
+                        n.data('label', "ICH\n100%");
+                        n.data('isStart', true);
+                    } else {
+                        let percent = Math.round(p * 100);
+                        let hopsStr = shortestHops[id] !== undefined ? `${shortestHops[id]} Hop${shortestHops[id] > 1 ? 's' : ''}` : "∞ Hops";
+                        
+                        n.data('label', `${percent}%\n${hopsStr}`);
+                    }
+                });
+            });
+            cy.style().update();
+            updateStatistics();
+        }
+
+        function updateStatistics() {
+            if (!cy) return;
+
+            // 1. Zähler für Kanten-Tiers
+            let countLow = 0, countMed = 0, countHigh = 0;
+            cy.edges().forEach(e => {
+                let t = e.data('tier');
+                if (t === 0) countLow++;
+                else if (t === 1) countMed++;
+                else if (t === 2) countHigh++;
+            });
+            
+            let elLow = document.getElementById('statEdgeLow');
+            let elMed = document.getElementById('statEdgeMed');
+            let elHigh = document.getElementById('statEdgeHigh');
+            if (elLow) elLow.innerText = countLow;
+            if (elMed) elMed.innerText = countMed;
+            if (elHigh) elHigh.innerText = countHigh;
+
+            if (document.getElementById('lblStatLow')) document.getElementById('lblStatLow').innerText = LEVELS[0].label;
+            if (document.getElementById('lblStatMed')) document.getElementById('lblStatMed').innerText = LEVELS[1].label;
+            if (document.getElementById('lblStatHigh')) document.getElementById('lblStatHigh').innerText = LEVELS[2].label;
+
+            // 2. 10% Centil-Verteilung
+            let deciles = new Array(11).fill(0);
+            cy.nodes().forEach(n => {
+                let val = n.data('trustVal') || 0;
+                let decIndex = Math.floor(val * 10);
+                if (decIndex > 10) decIndex = 10;
+                deciles[decIndex]++;
+            });
+
+            let chartHtml = "";
+            let maxCount = Math.max(...deciles, 1);
+            
+            // Absteigend, die stärksten Balken oben!
+            for (let i = 10; i >= 0; i--) {
+                let count = deciles[i];
+                let label = (i === 10) ? "100%" : `${i*10}-${i*10+9}%`;
+                
+                let pct = (count / maxCount) * 100;
+                
+                let color = '#484f58';
+                if (i === 10) color = '#2ecc71';
+                else if (i >= 7) color = '#2ea043';
+                else if (i >= 4) color = '#f1c40f';
+                else if (i >= 1) color = '#d29922';
+                else color = '#e74c3c';
+                
+                chartHtml += `
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <div style="width: 45px; text-align: right; color: #8b949e;">${label}</div>
+                        <div style="flex-grow: 1; background: #30363d; height: 10px; border-radius: 2px; overflow: hidden;">
+                            <div style="width: ${pct}%; background: ${color}; height: 100%; transition: width 0.3s ease;"></div>
+                        </div>
+                        <div style="width: 25px; text-align: left; font-weight: bold;">${count}</div>
+                    </div>
+                `;
+            }
+            
+            let chartEl = document.getElementById('trustChart');
+            if (chartEl) chartEl.innerHTML = chartHtml;
+        }
+
+        // Check if two line segments intersect (excluding shared endpoints)
+        function segmentsIntersect(p1, p2, p3, p4) {
+            const orientation = (a, b, c) => {
+                const val = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+                if (val === 0) return 0;
+                return val > 0 ? 1 : 2;
+            };
+
+            const onSegment = (a, b, c) => {
+                return b.x <= Math.max(a.x, c.x) && b.x >= Math.min(a.x, c.x) &&
+                       b.y <= Math.max(a.y, c.y) && b.y >= Math.min(a.y, c.y);
+            };
+
+            const o1 = orientation(p1, p2, p3);
+            const o2 = orientation(p1, p2, p4);
+            const o3 = orientation(p3, p4, p1);
+            const o4 = orientation(p3, p4, p2);
+
+            if (o1 !== o2 && o3 !== o4) return true;
+
+            // Check for collinear cases (shouldn't happen in our graph but for completeness)
+            if (o1 === 0 && onSegment(p1, p3, p2)) return true;
+            if (o2 === 0 && onSegment(p1, p4, p2)) return true;
+            if (o3 === 0 && onSegment(p3, p1, p4)) return true;
+            if (o4 === 0 && onSegment(p3, p2, p4)) return true;
+
+            return false;
+        }
+
+        // Find all crossing edges
+        function findCrossingEdges() {
+            let edges = cy.edges();
+            let crossings = [];
+            
+            for (let i = 0; i < edges.length; i++) {
+                for (let j = i + 1; j < edges.length; j++) {
+                    let e1 = edges[i];
+                    let e2 = edges[j];
+                    
+                    // Skip if edges share a node (compare IDs)
+                    if (e1.source().id() === e2.source().id() || e1.source().id() === e2.target().id() ||
+                        e1.target().id() === e2.source().id() || e1.target().id() === e2.target().id()) {
+                        continue;
+                    }
+                    
+                    let p1 = e1.source().position();
+                    let p2 = e1.target().position();
+                    let p3 = e2.source().position();
+                    let p4 = e2.target().position();
+                    
+                    if (segmentsIntersect(p1, p2, p3, p4)) {
+                        crossings.push([e1, e2]);
+                    }
+                }
+            }
+            
+            return crossings;
+        }
+
+        // Make graph planar by removing crossing edges
+        function makePlanar() {
+            if (!cy) return;
+            
+            let edgesRemoved = 0;
+            let maxIterations = 100;
+            let iteration = 0;
+            
+            while (iteration < maxIterations) {
+                let crossings = findCrossingEdges();
+                if (crossings.length === 0) break;
+                
+                // Count edge involvement in crossings
+                let edgeCrossingCount = new Map();
+                let nodeDegree = new Map();
+                
+                crossings.forEach(([e1, e2]) => {
+                    edgeCrossingCount.set(e1.id(), (edgeCrossingCount.get(e1.id()) || 0) + 1);
+                    edgeCrossingCount.set(e2.id(), (edgeCrossingCount.get(e2.id()) || 0) + 1);
+                    
+                    // Count node degrees
+                    [e1.source(), e1.target(), e2.source(), e2.target()].forEach(node => {
+                        nodeDegree.set(node.id(), node.degree());
+                    });
+                });
+                
+                // Find edge to remove: prioritize edges connected to high-degree nodes
+                let edgeToRemove = null;
+                let maxScore = -1;
+                
+                edgeCrossingCount.forEach((count, edgeId) => {
+                    let edge = cy.getElementById(edgeId);
+                    let sourceDegree = edge.source().degree();
+                    let targetDegree = edge.target().degree();
+                    let score = count * (sourceDegree + targetDegree);
+                    
+                    if (score > maxScore) {
+                        maxScore = score;
+                        edgeToRemove = edge;
+                    }
+                });
+                
+                if (edgeToRemove) {
+                    cy.remove(edgeToRemove);
+                    edgesRemoved++;
+                }
+                
+                iteration++;
+            }
+            
+            // Try to add back non-crossing edges
+            let biProb = parseInt(document.getElementById('bidirectionalProb').value) / 100.0;
+            let maxToAdd = edgesRemoved; // Add back as many as were removed
+            let added = 0;
+            
+            console.log(`Entfernte Kanten: ${edgesRemoved}, Max hinzuzufügen: ${maxToAdd}`);
+            
+            // Build a list of all possible node pairs that don't have an edge
+            let nodes = cy.nodes();
+            let possiblePairs = [];
+            
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    let n1 = nodes[i];
+                    let n2 = nodes[j];
+                    
+                    // Check if edge already exists in either direction
+                    let existingEdge = cy.edges(`[source = "${n1.id()}"][target = "${n2.id()}"]`);
+                    if (existingEdge.length > 0) continue;
+                    existingEdge = cy.edges(`[source = "${n2.id()}"][target = "${n1.id()}"]`);
+                    if (existingEdge.length > 0) continue;
+                    
+                    possiblePairs.push([n1, n2]);
+                }
+            }
+            
+            console.log(`Mögliche Paare: ${possiblePairs.length}`);
+            
+            // Sort pairs by distance (closer nodes first - less likely to cross)
+            possiblePairs.sort((a, b) => {
+                let posA1 = a[0].position();
+                let posA2 = a[1].position();
+                let posB1 = b[0].position();
+                let posB2 = b[1].position();
+                let distA = Math.hypot(posA1.x - posA2.x, posA1.y - posA2.y);
+                let distB = Math.hypot(posB1.x - posB2.x, posB1.y - posB2.y);
+                return distA - distB;
+            });
+            
+            // Try to add edges from sorted pairs
+            let checkedPairs = 0;
+            for (let pair of possiblePairs) {
+                if (added >= maxToAdd) break;
+                
+                let node1 = pair[0];
+                let node2 = pair[1];
+                checkedPairs++;
+                
+                // Get positions
+                let p1 = node1.position();
+                let p2 = node2.position();
+                
+                // Check if adding this edge would create crossings
+                let wouldCross = false;
+                let edges = cy.edges();
+                
+                for (let i = 0; i < edges.length; i++) {
+                    let edge = edges[i];
+                    let es = edge.source();
+                    let et = edge.target();
+                    
+                    // Skip edges that share nodes (compare IDs, not objects)
+                    if (es.id() === node1.id() || et.id() === node1.id() ||
+                        es.id() === node2.id() || et.id() === node2.id()) {
+                        continue;
+                    }
+                    
+                    let p3 = es.position();
+                    let p4 = et.position();
+                    
+                    if (segmentsIntersect(p1, p2, p3, p4)) {
+                        wouldCross = true;
+                        break;
+                    }
+                }
+                
+                if (wouldCross) continue;
+                
+                // Add the edge
+                let level = getRandomTrustLevel();
+                let isBidirectional = Math.random() < biProb;
+                
+                cy.add({
+                    group: 'edges',
+                    data: {
+                        id: `${node1.id()}->${node2.id()}_${Date.now()}_${added}`,
+                        source: node1.id(),
+                        target: node2.id(),
+                        tier: level.tier,
+                        factor: level.factor,
+                        label: level.label,
+                        color: level.color,
+                        width: level.width,
+                        isBidirectional: isBidirectional
+                    }
+                });
+                
+                added++;
+                console.log(`Kante hinzugefügt: ${node1.id()} -> ${node2.id()}`);
+            }
+            
+            console.log(`Geprüfte Paare: ${checkedPairs}, Hinzugefügt: ${added}`);
+            
+            recalculateTrust();
+            cy.fit(cy.elements(), 20);
+        }
+
+// Main execution
+        function runSimulation() {
+            let numNodes = parseInt(document.getElementById('nodeCount').value);
+            let K = parseInt(document.getElementById('density').value);
+            let biProb = parseInt(document.getElementById('bidirectionalProb').value) / 100.0;
+
+            if (isNaN(numNodes) || numNodes < 2) numNodes = 50;
+
+            readEdgeWeightsFromUI();
+
+            // 1. Generate Topological Graph
+            let graph = generateGraphData(numNodes, K, biProb);
+
+            // 2. Select a random Start Node ("ICH")
+            let startIndex = Math.floor(Math.random() * numNodes);
+            currentStartId = 'n' + startIndex;
+
+            // 3. Render with Cytoscape First
+            renderGraph(graph.nodes, graph.edges);
+            
+            // 4. Calculate Trust using the interactive logic
+            recalculateTrust();
+        }
+
+        // Find shortest path from startNode to endNode using BFS
+        function findShortestPath(startNodeId, endNodeId) {
+            if (!cy) return null;
+            
+            // Build adjacency list
+            let adjacency = {};
+            cy.edges().forEach(e => {
+                let src = e.data('source');
+                let tgt = e.data('target');
+                
+                if (!adjacency[src]) adjacency[src] = [];
+                adjacency[src].push({ target: tgt, edge: e });
+                
+                if (e.data('isBidirectional')) {
+                    if (!adjacency[tgt]) adjacency[tgt] = [];
+                    adjacency[tgt].push({ target: src, edge: e });
+                }
+            });
+            
+            // BFS to find shortest path
+            let queue = [startNodeId];
+            let visited = new Set([startNodeId]);
+            let parent = {}; // To reconstruct path: parent[nodeId] = { prevNodeId, edge }
+            
+            while (queue.length > 0) {
+                let current = queue.shift();
+                
+                if (current === endNodeId) {
+                    // Reconstruct path
+                    let path = [];
+                    let node = endNodeId;
+                    while (node !== startNodeId && parent[node]) {
+                        path.unshift(parent[node].edge);
+                        node = parent[node].prev;
+                    }
+                    return path;
+                }
+                
+                if (adjacency[current]) {
+                    for (let neighbor of adjacency[current]) {
+                        if (!visited.has(neighbor.target)) {
+                            visited.add(neighbor.target);
+                            parent[neighbor.target] = { prev: current, edge: neighbor.edge };
+                            queue.push(neighbor.target);
+                        }
+                    }
+                }
+            }
+            
+            return null; // No path found
+        }
+
+        // Highlight the edges of a path
+        function highlightPath(pathEdges) {
+            // Clear previous highlights
+            clearPathHighlight();
+            
+            highlightedPathEdges = pathEdges;
+            
+            cy.batch(() => {
+                pathEdges.forEach(edge => {
+                    edge.data('originalColor', edge.data('color'));
+                    edge.data('originalWidth', edge.data('width'));
+                    edge.data('color', '#ffffff');
+                    edge.data('width', edge.data('width') * 2);
+                });
+            });
+            cy.style().update();
+        }
+
+        // Clear the highlighted path
+        function clearPathHighlight() {
+            if (highlightedPathEdges.length === 0) return;
+            
+            cy.batch(() => {
+                highlightedPathEdges.forEach(edge => {
+                    if (edge.data('originalColor')) {
+                        edge.data('color', edge.data('originalColor'));
+                        edge.data('width', edge.data('originalWidth'));
+                        edge.removeData('originalColor');
+                        edge.removeData('originalWidth');
+                    }
+                });
+            });
+            highlightedPathEdges = [];
+            cy.style().update();
+        }
+
+        function renderGraph(nodes, edges) {
+            if (cy) cy.destroy();
+
+            cy = cytoscape({
+                container: document.getElementById('cy'),
+                elements: { nodes: nodes, edges: edges },
+                style: [
+                    {
+                        selector: 'node',
+                        style: {
+                            'label': 'data(label)',
+                            'background-color': getNodeColor,
+                            'color': getTextColor,
+                            'font-size': '12px',
+                            'font-family': 'Inter',
+                            'font-weight': 'bold',
+                            'text-wrap': 'wrap',
+                            'text-valign': 'center',
+                            'text-halign': 'center',
+                            'line-height': 1.2,
+                            'width': ele => ele.data('isStart') ? '70px' : (ele.data('trustVal') > 0 ? '55px' : '40px'),
+                            'height': ele => ele.data('isStart') ? '70px' : (ele.data('trustVal') > 0 ? '55px' : '40px'),
+                            'text-outline-width': ele => ele.data('isStart') ? 3 : 2,
+                            'text-outline-color': getNodeColor,
+                            'border-width': ele => ele.data('isStart') ? 5 : 0,
+                            'border-color': 'rgba(255, 255, 255, 0.4)'
+                        }
+                    },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': 'data(width)',
+                            'line-color': 'data(color)',
+                            'target-arrow-color': 'data(color)',
+                            'target-arrow-shape': 'triangle',
+                            'source-arrow-color': 'data(color)',
+                            'source-arrow-shape': ele => ele.data('isBidirectional') ? 'triangle' : 'none',
+                            'curve-style': 'bezier',
+                            'label': 'data(label)',
+                            'font-size': '11px',
+                            'font-weight': 'bold',
+                            'color': '#ddd',
+                            'text-background-opacity': 1,
+                            'text-background-color': '#0d1117',
+                            'text-background-padding': '4px',
+                            'arrow-scale': 1.1
+                        }
+                    }
+                ],
+                layout: {
+                    name: 'cose',
+                    idealEdgeLength: 150,
+                    nodeOverlap: 50,
+                    refresh: 20,
+                    fit: true,
+                    padding: 40,
+                    randomize: true,
+                    componentSpacing: 150,
+                    nodeRepulsion: 800000,
+                    edgeElasticity: 50,
+                    nestingFactor: 5,
+                    gravity: 40,
+                    numIter: 400,
+                    initialTemp: 200,
+                    coolingFactor: 0.95,
+                    minTemp: 1.0
+                },
+                wheelSensitivity: 0.2
+            });
+
+            // Tap event to cycle edge factor
+            cy.on('tap dblclick', 'edge', function(evt){
+                let edge = evt.target;
+                let currentTier = edge.data('tier');
+                
+                let nextTier;
+                if (currentTier === 2) nextTier = 1;      // High -> Med
+                else if (currentTier === 1) nextTier = 0; // Med -> Low
+                else nextTier = 2;                        // Low -> High
+
+                edge.data('tier', nextTier);
+                edge.data('factor', LEVELS[nextTier].factor);
+                edge.data('label', LEVELS[nextTier].label);
+                edge.data('color', LEVELS[nextTier].color);
+                edge.data('width', LEVELS[nextTier].width);
+
+                recalculateTrust();
+                cy.fit(cy.elements(), 20);
+            });
+
+            // Feature 5: Right click to remove / create edges
+            let sourceNodeForEdge = null;
+
+            // Remove edge on right click (cxttap)
+            cy.on('cxttap', 'edge', function(evt){
+                let edge = evt.target;
+                cy.remove(edge);
+                recalculateTrust();
+                cy.fit(cy.elements(), 20);
+            });
+
+            // Right click on node: show shortest path from ICH to node
+            cy.on('cxttap', 'node', function(evt){
+                let node = evt.target;
+                let nodeId = node.id();
+                
+                if (nodeId === currentStartId) return; // Don't show path for ICH itself
+                
+                let path = findShortestPath(currentStartId, nodeId);
+                if (path) {
+                    highlightPath(path);
+                }
+            });
+
+            // Left click on node: select for edge creation
+            cy.on('tap dblclick', 'node', function(evt){
+                let node = evt.target;
+                
+                if (!sourceNodeForEdge) {
+                    sourceNodeForEdge = node;
+                    node.style({
+                        'border-color': '#fff',
+                        'border-width': 8
+                    });
+                } else {
+                    if (sourceNodeForEdge.id() !== node.id()) {
+                        let srcId = sourceNodeForEdge.id();
+                        let tgtId = node.id();
+                        
+                        let existFwd = cy.edges(`[source = "${srcId}"][target = "${tgtId}"]`);
+                        let existBwd = cy.edges(`[source = "${tgtId}"][target = "${srcId}"]`);
+                        
+                        if (existFwd.length > 0) {
+                            existFwd.data('isBidirectional', true);
+                        } else if (existBwd.length > 0) {
+                            existBwd.data('isBidirectional', true);
+                        } else {
+                            let tier = 1; // Middle value (Kontakt)
+                            cy.add({
+                                group: 'edges',
+                                data: {
+                                    id: `${srcId}->${tgtId}_${Date.now()}`,
+                                    source: srcId,
+                                    target: tgtId,
+                                    tier: tier,
+                                    factor: LEVELS[tier].factor,
+                                    label: LEVELS[tier].label,
+                                    color: LEVELS[tier].color,
+                                    width: LEVELS[tier].width,
+                                    isBidirectional: false
+                                }
+                            });
+                        }
+                    }
+                    
+                    sourceNodeForEdge.removeStyle('border-color');
+                    sourceNodeForEdge.removeStyle('border-width');
+                    sourceNodeForEdge = null;
+                    
+                    recalculateTrust();
+                    cy.fit(cy.elements(), 20);
+                }
+            });
+
+            // Cancel selection and clear path if clicking on background
+            cy.on('tap cxttap dblclick', function(evt){
+                if (evt.target === cy) {
+                    if (sourceNodeForEdge) {
+                        sourceNodeForEdge.removeStyle('border-color');
+                        sourceNodeForEdge.removeStyle('border-width');
+                        sourceNodeForEdge = null;
+                    }
+                    clearPathHighlight();
+                }
+            });
+
+            // Zoom to fit when nodes are dragged
+            cy.on('dragfree', 'node', function(){
+                cy.fit(cy.elements(), 20);
+            });
+        }
+
+        // Initial run
+        window.addEventListener('DOMContentLoaded', runSimulation);
+
+    </script>
+</body>
+</html>
