@@ -1,8 +1,9 @@
 # ADR 0: Grundprinzip des Humoco Web of Trust (MVP)
 
-**Status:** Informational / Übersicht
-**Kontext:** Dezentrales Web of Trust (WoT)
-**Datum:** 10. April 2026
+**Status:** Informational / Übersicht  
+**Aktualisiert:** Protokoll-Harmonisierung & JWE/JWS Standards  
+**Kontext:** Dezentrales Web of Trust (WoT)  
+**Datum:** 10. April 2026 (Aktualisiert am 22. April 2026)
 
 Diese Übersicht beschreibt den Kernmechanismus des Humoco (Human Money Core) Web of Trust, reduziert auf die essentiellen Schritte für den Austausch im direkten Umfeld (Freundeskreis) und den Aufbau des Vertrauensnetzwerks für den Handel.
 

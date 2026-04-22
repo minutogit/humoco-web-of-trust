@@ -1,15 +1,16 @@
 # ADR 4: Vertrauenslisten als Selective Disclosure JWT (SD-JWT)
 
-**Status:** Vorgeschlagen / Akzeptiert
+**Status:** Vorgeschlagen / Akzeptiert  
+**Aktualisiert:** Protokoll-Harmonisierung & JWE/JWS Standards  
 **Kontext:** Dezentrales Web of Trust (WoT) basierend auf `did:key`  
-**Datum:** 6. April 2026
+**Datum:** 6. April 2026 (Aktualisiert am 22. April 2026)
 
 ## 1. Problemstellung
 Wir benötigen eine Methode für das "Stranger Discovery Protocol" (Offline-Nähe) und das asynchrone Gossip-Protokoll, um Vertrauensbeziehungen (Schnittmengen von Freunden) offenzulegen, ohne die komplette Netzwerk-Vertrauensliste unverschlüsselt in Klartext bereitzustellen.
 Zusätzlich ergibt sich aus der Architektur für "Reziprokes Routing" (ADR 0005) die harte Anforderung: Wenn ein Peer eine fremde Vertrauensliste via Gossip weiterleitet, muss er – abhängig von den aufgebrauchten Hop-Limits – gezielt **einzelne** Einträge aus dieser Liste redigieren (löschen) können, ohne dass die kryptographische Ed25519-Signatur des ursprünglichen Erstellers bricht.
 
 ## 2. Getroffene Entscheidung
-Wir strukturieren die Vertrauensliste (die *Trust List*), die via Gossip im Netzwerk verteilt wird, nativ als **SD-JWT (Selective Disclosure JWT)** nach dem IETF-Standard.
+Wir strukturieren die Vertrauensliste (die *Trust List*), die via Gossip im Netzwerk verteilt wird, nativ als **SD-JWT (Selective Disclosure JWT)** nach dem IETF-Standard. Als verschlüsselter Transport-Umschlag wird hierfür die `SecureContainer`-Implementierung des `human-money-core` (JWE) genutzt.
 
 ### Technische Spezifikationen
 
@@ -48,9 +49,16 @@ Jeder Kontakt wird als separates, selektiv offenlegbares Objekt im Payload hinte
 **3. Kryptographische Signatur**
 *   Die Ed25519-Signatur des Issuers über die gesamte Struktur. Obwohl der Knoten, der dieses Paket weiterreicht, bestimmte Einträge (wie in Zeile 3) gezielt "geschwärzt" hat, bleibt die Signatur für die restlichen, sichtbaren Einträge (Zeile 1 und 2) mathematisch vollumfänglich valide.
 
+#### G. Harte Regeln für lokale Interaktionen (QR/BLE)
+Um die Dateneffizienz bei physischen Begegnungen (Stranger Discovery via QR-Code, BLE oder NFC) zu maximieren, gelten folgende verbindliche Anforderungen:
+*   **Format:** Es wird ausschließlich **JWE Compact Serialization** verwendet. Die Full JSON Serialization von JWE ist aufgrund des Overheads verboten.
+*   **Privacy Mode:** Es muss zwingend `PrivacyMode::TrialDecryption` genutzt werden. Dies verhindert, dass passive Lauscher (z.B. in der Nähe eines QR-Code-Scanners) Bewegungsprofile durch Auslesen der Empfänger-DIDs im Header erstellen können.
+*   **Kein W3C VC Overhead:** Die Verwendung von W3C Verifiable Credentials (VCs) ist für lokale Handshakes **strikt untersagt**. Der zusätzliche JSON-LD/Context-Overhead (~100+ Bytes) würde die Kapazität von QR-Codes sprengen oder die BLE-Latenz unnötig erhöhen. Wir nutzen stattdessen die rohen SD-JWTs (JWS) direkt im JWE-Container.
+
 ## 3. Rationale (Begründung)
 *   **Signaturerhaltende Reduktion:** SD-JWTs sind die optimale architektonische Lösung für die selektive Hop-Redaktion auf Einzelkontakt-Ebene, die in ADR 0005 gefordert wird.
 *   **Sicherheitsstandards:** Das System nutzt durchgehend etablierte und intensiv geprüfte SD-JWT Strukturen.
+*   **Protokoll-Harmonisierung:** Wir folgen strikt den RFC 7515 (JWS) und RFC 7516 (JWE) Standards, die SHA-256 und Base64URL voraussetzen.
 
 ## 4. Konsequenzen
 

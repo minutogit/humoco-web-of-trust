@@ -1,8 +1,9 @@
 # ADR 3: Architektur und UI-Design für dezentrales Vertrauen und Haftung
 
 **Status:** Akzeptiert  
-**Kontext:** Dezentrales Humangeld-Netzwerk (Web of Trust)
-**Datum:** 04. April 2026
+**Aktualisiert:** Protokoll-Harmonisierung & JWE/JWS Standards  
+**Kontext:** Dezentrales Humangeld-Netzwerk (Web of Trust)  
+**Datum:** 04. April 2026 (Aktualisiert am 22. April 2026)
 
 ## 1. Kontext und Motivation
 In einem dezentralen Humangeld-System (wie dem digitalen Minuto) gibt es keine zentrale Autorität und keinen globalen Token (wie Ethereum), der bei Fehlverhalten entzogen oder verbrannt ("geslashed") werden könnte. Das System basiert vollständig auf digitalen Leistungsversprechen und menschlichem Vertrauen.

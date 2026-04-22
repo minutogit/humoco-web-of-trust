@@ -1,8 +1,9 @@
 # ADR 1: Pfadberechnung und Vertrauenswahrscheinlichkeiten (Graph-Evaluierung)
 
-**Status:** Akzeptiert
+**Status:** Akzeptiert  
+**Aktualisiert:** Protokoll-Harmonisierung & JWE/JWS Standards  
 **Kontext:** Dezentrales Web of Trust (WoT) basierend auf `did:key`  
-**Datum:** 6. April 2026
+**Datum:** 6. April 2026 (Aktualisiert am 22. April 2026)
 
 ## 1. Problemstellung
 Nachdem die Vertrauenslisten als SD-JWTs (ADR 0004) im Netzwerk asynchron verteilt wurden (ADR 0006), liegen im lokalen Wallet zahlreiche isolierte Kanten (Vertrauensbeziehungen) zwischen verschiedenen Nutzern vor. Um das Netzwerk als Basis für das "Human Money" System nutzen zu können, muss der Client in der Lage sein, aus diesen iterierbaren Listen eine sinnvolle Pfadberechnung durchzuführen, um die Vertrauenswürdigkeit eines völlig fremden Dritten zu evaluieren ("Stranger Discovery").

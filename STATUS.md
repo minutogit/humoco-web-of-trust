@@ -3,7 +3,7 @@ project: humoco-web-of-trust
 version: "0.1.0"
 phase: "research"
 health: "green"
-last_updated: "2026-04-10"
+last_updated: "2026-04-22"
 blocks: ["CORE-001", "CORE-002", "CORE-003"]
 blocked_by: []
 priority_tasks:
@@ -117,6 +117,7 @@ WOT-006 (Trust Establishment / ADR-007) + WOT-009 (Dual Storage Arch)
 - [x] Spezifikation von Truncated-Hashes und Dateneffizienz in ADR 0004.
 - [x] Spezifikation des Gossip-Protokolls & Piggybacking via Core (ADR 0006).
 - [x] Pfadberechnung auf Netzwerk-Vertrauen umgestellt (ADR 0001 neu).
+- [x] Protokoll-Harmonisierung (SHA-256, Base64URL, DIDComm v2, JWE/JWS Compact).
 
 ## Next Milestones
 

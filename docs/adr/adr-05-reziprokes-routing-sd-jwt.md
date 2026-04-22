@@ -1,8 +1,9 @@
 # ADR 5: Reziprokes Routing und granulare Privatsphäre via SD-JWT
 
-**Status:** Vorgeschlagen / Entwurf
-**Kontext:** Protokoll / Web of Trust / Privacy
-**Datum:** 6. April 2026
+**Status:** Vorgeschlagen / Entwurf  
+**Aktualisiert:** Protokoll-Harmonisierung & JWE/JWS Standards  
+**Kontext:** Protokoll / Web of Trust / Privacy  
+**Datum:** 6. April 2026 (Aktualisiert am 22. April 2026)
 
 ## 1. Kontext und Problemstellung
 Um Zahlungsrouten über mehrere Hops berechnen zu können, müssen Vertrauenslisten (wer vertraut wem) im Netzwerk weitergegeben werden.
