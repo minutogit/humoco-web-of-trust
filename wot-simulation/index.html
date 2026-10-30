@@ -234,7 +234,7 @@
                     • Mausrad: Zoomen<br>
                     • Ziehen: Knoten verschieben<br><br>
                     <strong>Vertrauensberechnung:</strong><br>
-                    Prozente ergeben sich aus allen Pfaden vom "ICH" zum Knoten. Mehrere Pfade erhöhen das Vertrauen (Wahrscheinlichkeit, dass mindestens einer vertrauenswürdig ist).
+                    Prozente ergeben sich aus den Pfaden vom "ICH" zum Knoten. Mit aktivem <em>Nadelöhr-Schutz (Shared-Edge Factoring nach ADR-01)</em> werden geteilte Kanten herausfaktorisiert – 20 Pfade hinter einem einzigen 30%-Kontakt können das Vertrauen niemals über 30% heben. Im naiven Modus werden alle Pfade unabhängig addiert.
                 </div>
             </div>
         </h1>
@@ -259,6 +259,14 @@
                 <input type="range" id="bidirectionalProb" value="90" min="0" max="100" style="flex-grow: 1;" oninput="document.getElementById('biProbVal').innerText = this.value + '%'">
                 <span id="biProbVal" style="font-size: 14px; width: 35px; text-align: right; color: var(--accent-color); font-weight: bold;">90%</span>
             </div>
+        </div>
+
+        <div class="control-group">
+            <label for="calcMode">Berechnungs-Modus</label>
+            <select id="calcMode" onchange="recalculateTrust()">
+                <option value="factoring" selected>Nadelöhr-Schutz aktiv (ADR-01 Shared-Edge)</option>
+                <option value="naive">Naiv (Alle Pfade frei addieren – Alt)</option>
+            </select>
         </div>
 
         <button onclick="runSimulation()">Netzwerk generieren</button>
@@ -489,12 +497,190 @@
             return luminance > 128 ? '#000' : '#fff';
         }
 
+        // Shared-Edge Factoring (Shannon-Pivoting nach ADR-01)
+        function filterSubsumptions(paths) {
+            let sorted = paths.slice().sort((a, b) => a.edges.size - b.edges.size);
+            let kept = [];
+            for (let p of sorted) {
+                let isSuperset = false;
+                for (let k of kept) {
+                    let isSub = true;
+                    for (let e of k.edges) {
+                        if (!p.edges.has(e)) {
+                            isSub = false;
+                            break;
+                        }
+                    }
+                    if (isSub) {
+                        isSuperset = true;
+                        break;
+                    }
+                }
+                if (!isSuperset) {
+                    kept.push(p);
+                }
+            }
+            return kept;
+        }
+
+        function findConnectedComponents(paths) {
+            if (paths.length <= 1) return [paths];
+            let n = paths.length;
+            let adj = Array.from({ length: n }, () => []);
+            for (let i = 0; i < n; i++) {
+                for (let j = i + 1; j < n; j++) {
+                    let share = false;
+                    for (let e of paths[i].edges) {
+                        if (paths[j].edges.has(e)) {
+                            share = true;
+                            break;
+                        }
+                    }
+                    if (share) {
+                        adj[i].push(j);
+                        adj[j].push(i);
+                    }
+                }
+            }
+            let visited = new Set();
+            let components = [];
+            for (let i = 0; i < n; i++) {
+                if (!visited.has(i)) {
+                    let comp = [];
+                    let q = [i];
+                    visited.add(i);
+                    while (q.length > 0) {
+                        let curr = q.shift();
+                        comp.push(paths[curr]);
+                        for (let neighbor of adj[curr]) {
+                            if (!visited.has(neighbor)) {
+                                visited.add(neighbor);
+                                q.push(neighbor);
+                            }
+                        }
+                    }
+                    components.push(comp);
+                }
+            }
+            return components;
+        }
+
+        function pathProbability(path, edgeWeights) {
+            let prod = 1.0;
+            for (let e of path.edges) {
+                let w = (edgeWeights[e] !== undefined) ? edgeWeights[e] : 0.3;
+                prod *= w;
+            }
+            return prod;
+        }
+
+        function solveFactoring(paths, edgeWeights, depth = 0) {
+            // 1. Basis-Fälle
+            if (paths.length === 0) return 0.0;
+            for (let p of paths) {
+                if (p.edges.size === 0) return 1.0;
+            }
+            if (paths.length === 1) {
+                return pathProbability(paths[0], edgeWeights);
+            }
+
+            // 2. Subsumptions-Filter: Entferne Pfade, die Obermenge kürzerer Pfade sind
+            let filteredPaths = filterSubsumptions(paths);
+            if (filteredPaths.length === 0) return 0.0;
+            for (let p of filteredPaths) {
+                if (p.edges.size === 0) return 1.0;
+            }
+            if (filteredPaths.length === 1) {
+                return pathProbability(filteredPaths[0], edgeWeights);
+            }
+
+            // 3. Zerlege in zusammenhängende Komponenten über geteilten Kanten
+            let components = findConnectedComponents(filteredPaths);
+            if (components.length > 1) {
+                let combinedInverse = 1.0;
+                for (let comp of components) {
+                    let r_c = solveComponent(comp, edgeWeights, depth);
+                    combinedInverse *= (1.0 - r_c);
+                }
+                return Math.max(0.0, Math.min(1.0, 1.0 - combinedInverse));
+            } else {
+                return solveComponent(components[0], edgeWeights, depth);
+            }
+        }
+
+        function solveComponent(componentPaths, edgeWeights, depth) {
+            if (componentPaths.length === 0) return 0.0;
+            for (let p of componentPaths) {
+                if (p.edges.size === 0) return 1.0;
+            }
+            if (componentPaths.length === 1) {
+                return pathProbability(componentPaths[0], edgeWeights);
+            }
+
+            // Häufigkeit jeder Kante in dieser Komponente zählen
+            let edgeCounts = {};
+            for (let p of componentPaths) {
+                for (let e of p.edges) {
+                    edgeCounts[e] = (edgeCounts[e] || 0) + 1;
+                }
+            }
+
+            let maxEdge = null;
+            let maxCount = 0;
+            for (let e in edgeCounts) {
+                if (edgeCounts[e] > maxCount) {
+                    maxCount = edgeCounts[e];
+                    maxEdge = e;
+                }
+            }
+
+            // 4. Falls Häufigkeit == 1 (keine Kante geteilt) oder Tiefenlimit 14 erreicht:
+            if (maxCount <= 1 || depth >= 14) {
+                let combinedInverse = 1.0;
+                for (let p of componentPaths) {
+                    combinedInverse *= (1.0 - pathProbability(p, edgeWeights));
+                }
+                return Math.max(0.0, Math.min(1.0, 1.0 - combinedInverse));
+            }
+
+            // 5. Rekursion (Shannon-Pivoting über e*)
+            let eStar = maxEdge;
+            let w_eStar = edgeWeights[eStar] !== undefined ? edgeWeights[eStar] : 0.3;
+
+            // Pfade mit e* (e* als erfüllt aus dem Pfad entfernt; Pfade ohne e* unverändert)
+            let pathsWith = [];
+            for (let p of componentPaths) {
+                if (p.edges.has(eStar)) {
+                    let newEdges = new Set(p.edges);
+                    newEdges.delete(eStar);
+                    pathsWith.push({ edges: newEdges });
+                } else {
+                    pathsWith.push({ edges: new Set(p.edges) });
+                }
+            }
+
+            // Pfade ohne e* (Pfade, die e* benötigen, fallen komplett weg)
+            let pathsWithout = [];
+            for (let p of componentPaths) {
+                if (!p.edges.has(eStar)) {
+                    pathsWithout.push({ edges: new Set(p.edges) });
+                }
+            }
+
+            let rWith = solveFactoring(pathsWith, edgeWeights, depth + 1);
+            let rWithout = solveFactoring(pathsWithout, edgeWeights, depth + 1);
+
+            let result = w_eStar * rWith + (1.0 - w_eStar) * rWithout;
+            return Math.max(0.0, Math.min(1.0, result));
+        }
+
         // Feature 4: Interactive Recalculation
         function recalculateTrust() {
             if (!cy || !currentStartId) return;
             const MAX_DEPTH = 4;
             let pathsToNode = {};
             let adjacency = {};
+            let edgeWeights = {};
             
             let cyEdges = cy.edges();
             for(let i=0; i<cyEdges.length; i++) {
@@ -503,12 +689,16 @@
                 let tgt = e.data('target');
                 let factor = e.data('factor');
                 
+                let fwdKey = `${src}->${tgt}`;
                 if (!adjacency[src]) adjacency[src] = [];
-                adjacency[src].push({ target: tgt, factor: factor });
+                adjacency[src].push({ target: tgt, factor: factor, edgeKey: fwdKey });
+                edgeWeights[fwdKey] = factor;
                 
                 if (e.data('isBidirectional')) {
+                    let bwdKey = `${tgt}->${src}`;
                     if (!adjacency[tgt]) adjacency[tgt] = [];
-                    adjacency[tgt].push({ target: src, factor: factor });
+                    adjacency[tgt].push({ target: src, factor: factor, edgeKey: bwdKey });
+                    edgeWeights[bwdKey] = factor;
                 }
             }
             
@@ -531,13 +721,16 @@
                 }
             }
             
-            // 2. DFS mapped to MAX_DEPTH to calculate the MultiPath Trust-Heuristic
-            function findPaths(currentId, currentTrust, visited) {
+            // 2. DFS mapped to MAX_DEPTH to find paths with edge sequences
+            function findPaths(currentId, currentTrust, currentEdges, visited) {
                 if (visited.size > MAX_DEPTH + 1) return;
                 
                 if (currentId !== currentStartId && currentTrust > 0) {
                     if (!pathsToNode[currentId]) pathsToNode[currentId] = [];
-                    pathsToNode[currentId].push(currentTrust);
+                    pathsToNode[currentId].push({
+                        prob: currentTrust,
+                        edges: [...currentEdges]
+                    });
                 }
                 
                 if (!adjacency[currentId]) return;
@@ -545,21 +738,44 @@
                 for (let edge of adjacency[currentId]) {
                     if (!visited.has(edge.target)) {
                         visited.add(edge.target);
-                        findPaths(edge.target, currentTrust * edge.factor, visited);
+                        currentEdges.push(edge.edgeKey);
+                        findPaths(edge.target, currentTrust * edge.factor, currentEdges, visited);
+                        currentEdges.pop();
                         visited.delete(edge.target);
                     }
                 }
             }
             
-            findPaths(currentStartId, 1.0, new Set([currentStartId]));
+            findPaths(currentStartId, 1.0, [], new Set([currentStartId]));
+
+            let calcMode = 'factoring';
+            let modeEl = document.getElementById('calcMode');
+            if (modeEl) calcMode = modeEl.value;
+
             let finalTrusts = {};
             finalTrusts[currentStartId] = 1.0;
             
             for (let nodeId in pathsToNode) {
-                let probs = pathsToNode[nodeId];
-                let combinedInverse = 1.0;
-                for (let p of probs) { combinedInverse *= (1 - p); }
-                finalTrusts[nodeId] = 1.0 - combinedInverse;
+                let candidatePaths = pathsToNode[nodeId];
+                // Top-24 stärkste Pfade nach Pfadwahrscheinlichkeit
+                candidatePaths.sort((a, b) => b.prob - a.prob);
+                if (candidatePaths.length > 24) {
+                    candidatePaths = candidatePaths.slice(0, 24);
+                }
+
+                if (calcMode === 'naive') {
+                    let combinedInverse = 1.0;
+                    for (let p of candidatePaths) {
+                        combinedInverse *= (1.0 - p.prob);
+                    }
+                    finalTrusts[nodeId] = Math.max(0.0, Math.min(1.0, 1.0 - combinedInverse));
+                } else {
+                    // Shared-Edge Factoring mit Subsumption und Komponenten-Zerlegung
+                    let formattedPaths = candidatePaths.map(p => ({
+                        edges: new Set(p.edges)
+                    }));
+                    finalTrusts[nodeId] = solveFactoring(formattedPaths, edgeWeights, 0);
+                }
             }
             
             cy.batch(() => {
