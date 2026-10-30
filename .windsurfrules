@@ -2,7 +2,7 @@
 
 Dieses Projekt nutzt eine geteilte Agenten-Konfiguration mit Antigravity.
 
-1. **Hauptanweisungen:** Deine primären Persona- und Projektanweisungen liegen in `AGENTS.md` (was ein Symlink auf `.agents/instructions.md` ist).
-2. **Spezifische Projektregeln:** Beachte zwingend alle Markdown-Dateien im Ordner `.agents/rules/` (insbesondere `wot-principles.md` und `status-maintenance.md`).
-3. **Skills & Fachwissen:** Wenn du spezielles Wissen zur WoT-Architektur oder MVP-Scope brauchst, lies die entsprechenden `SKILL.md`-Dateien im Ordner `.agents/skills/`.
-4. **Code:** Alle WoT Rust Entwicklungen finden im Verzeichnis `src/` statt, passe bestehende Infrastruktur in `human-money-core` nicht für produktspezifische WoT Logik an.
+1. **Hauptanweisungen:** Deine primären Persona- und Projektanweisungen liegen in `AGENTS.md` (Symlink auf `.agents/instructions.md`).
+2. **Spezifische Projektregeln:** Beachte zwingend alle Markdown-Dateien im Ordner `.agents/rules/` (insbesondere `status-maintenance.md`).
+3. **Skills & Fachwissen:** Wenn du detailliertes Architektur-Wissen zu ADR 00–07 brauchst, lies `.agents/skills/wot-architecture/SKILL.md`.
+4. **Code:** Alle WoT-Rust-Entwicklungen finden im Verzeichnis `src/` statt, passe bestehende Infrastruktur in `human-money-core` nicht für produktspezifische WoT-Logik an.

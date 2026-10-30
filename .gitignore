@@ -1,4 +1,4 @@
-/target/
-/.agents/
 /.ragindex/
 /.qwen/
+/.idea/
+/target/

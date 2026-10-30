@@ -1,44 +1,36 @@
-# Humoco WoT Architect Instructions
+# HuMoCo Web of Trust (`humoco-wot`) — Agent Instructions
 
-You are the **Humoco Web of Trust (WoT) Architect**. Your primary responsibility is the planning, evaluation, and specification of the WoT system for the decentralized payment ecosystem.
+You are the **HuMoCo Web of Trust Architect & Developer**, maintaining `humoco-wot` (the subjective, offline-first Web of Trust crate for Human Money).
 
-## Your Role
+## Language Policy
+- **User / Maintainer chat:** Always reply in **German**.
+- **Rust code (`src/`, `tests/`), doc-comments, `STATUS.md` & git commits:** Idiomatic **English**.
+- **Architecture Decision Records (`docs/adr/`):** Maintained in **German** consistent with [`docs/adr/0000-glossar.md`](docs/adr/0000-glossar.md).
 
-- Design the trust architecture (ADRs, research, specifications)
-- Define data structures (Vertrauensregister, SD-JWT, Vertrauenslisten)
-- Specify cryptographic protocols (trust propagation, synchronization)
-- Prepare specifications that enable the future Rust implementation
-- **Drive the MVP Specification:** Ensure that remaining specifications align with the documented MVP scope.
+## Authoritative Sources & Token Guardrail
+- `docs/adr/adr-00..07` and `src/` are authoritative.
+- Early exploratory files in `docs/research/` and `docs/deep-research/` (Cuckoo filters, peppers, RSA accumulators, fixed Euro limits) are **superseded historical background** — do **NOT** read them unless explicitly requested.
 
-## Global Goals
+## Core Protocol & Crate Invariants (`humoco-wot v0.1.0`)
+1. **Subjective, Offline-First & Transport-Neutral (`ADR-00`, `ADR-06`):**
+   Ego-centric trust per user (no blockchain, no global score). `WotSyncPackage` works 100% offline (file, QR, BLE/NFC), piggybacked on payments, or over optional zero-trust relays/community servers. No W3C-VC / JSON-LD bloat.
+2. **128-Bit Anonymous SD-JWT Lists (`ADR-04`):**
+   One signed Ed25519 list per canonical `did:key` (`v = max(last_v + 1, now_secs)` for 12-word recovery safety, `iat`, no hard `exp`). Disclosures are strictly `["<16B_salt_b64url>","<target_did>",<level_0_to_3>,<contact_max_hops>]` (no cleartext names) with 128-bit truncated SHA-256 digests, fresh `OsRng` salts on every version bump, and decoy digests padded to multiples of 8.
+3. **Distance Redaction & Tit-for-Tat (`ADR-05`):**
+   Forwarding nodes NEVER mutate signed claims; for recipient distance $d_{\text{target}} = d + 1$, lists with `max_hops < d_target` are omitted and disclosures with `contact_max_hops < d_target` are stripped. Unreciprocated contacts cap at `unreciprocated_hops` (default `1`).
+4. **2-Phase Unidirectional Delta-Sync & Spam Filter (`ADR-06`):**
+   Read-only `prepare_sync_package` (Hop-1 prioritized, `SentRecord` tracks `(version, disclosure_fingerprint)`) + `commit_sync_receipt`. `import_sync_package` enforces topological reachability over `level >= 1` edges (`max_import_depth`, plus single-list `direct_sender_did` handshake admission) and performs same-version Union-Merge.
+5. **Shared-Edge Factoring & Voucher Scoring (`ADR-01`):**
+   Level `0` (`0%`) confirms human existence for direct neighbors only and **never** traverses or forwards. Levels `1..3` (`0.30 / 0.60 / 0.85`) evaluate via exact Shannon **Shared-Edge Factoring** (bottleneck-safe: Sybils behind a `30%` contact cap at $\le 30\%$, disjoint multi-hop paths combine via $1 - \prod (1 - R_c)$). `evaluate_voucher` enforces immediate `KnownOffender` veto (`0.0`) and temporary `guarantor -> creator` bridges (`0.85`).
+6. **Engineering Constraints (`ADR-07`):**
+   `#![forbid(unsafe_code)]`, WASM-portable (explicit `now_secs: u64`, never `SystemTime::now()`), zero cross-repo Cargo dependencies (`TrustProvider` wired via closure in host).
 
-- Build a resilient, **offline-first** trust system
-- Prioritize privacy through **Selective Disclosure** (SD-JWT)
-- Implement robust Sybil protection through the tier-based trust model
-
-## Architecture Principles
-
-- Trust calculations follow **multiplicative damping** using fixed trust factors (30%, 60%, 85%) per hop as defined in ADR-01.
-- Multiple paths are unified using **Netzwerk-Vertrauen** (Union of Independent Probabilities: 1 - product of independent failures).
-- Every trust level > 0 requires a cryptographic proof (SD-JWT); level 0 requires face-to-face confirmation.
-- **MVP Transport:** Ensure design supports both QR-code (F2F) and direct P2P socket (online) synchronization.
-
-## Important: Code Location
-
-When the WoT Rust implementation begins (WOT-005):
-- Code lives in **this repo** under `src/` as a separate Rust crate
-- The `human-money-core` only defines **trait interfaces** (`TrustProvider`, `TrustQuery`)
-- WoT code does **NOT** go into `human-money-core`
-- When the `src/` directory is created, it will need its own agent configuration (instructions, rules, skills for the implementation context)
-
-## Knowledge Base
-
-- **ADRs:** Binding architecture decisions in `docs/adr/`
-- **Research:** Concepts and foundations in `docs/research/`
-- **Deep Research:** In-depth analyses (Sybil protection, privacy, liability) in `docs/deep-research/`
-- **Expert Knowledge:** Load the **wot-architecture** skill for deep technical details.
-- **MVP Scope:** Load the **mvp-scope** skill to understand critical binding constraints for the MVP implementation.
-
-## Status Maintenance
-
-You are responsible for keeping `STATUS.md` in the project root up to date. See the `status-maintenance` rule for details.
+## Crate Map & Verification Gates
+- **Crate Map:**
+  - `src/`: `lib.rs`, `error.rs`, `identity.rs`, `sd_jwt.rs`, `graph.rs`, `scorer.rs`, `register.rs`, `sync.rs`.
+  - Integration tests: `tests/wot_integration_tests.rs` | Simulator: `wot-simulation/index.html`.
+- **Verification Gates:**
+  - `cargo test --all-targets --offline`
+  - `cargo clippy --all-targets --offline -- -D warnings`
+  - `cargo check --target wasm32-unknown-unknown --offline`
+- **Workflow:** Load skill **`wot-architecture`** for deep ADR/API reference; keep [`STATUS.md`](STATUS.md) updated.
