@@ -224,9 +224,94 @@ pub fn evaluate_trust(
         });
     }
 
+    evaluate_trust_internal(
+        graph,
+        policy,
+        0,
+        &canonical_creator,
+        guarantor_ids,
+        now_secs,
+    )
+}
+
+/// Evaluates network trust from an observer's perspective towards a voucher given its creator and optional guarantors.
+pub fn evaluate_trust_from_observer(
+    graph: &EgoGraphCache,
+    policy: &WotPolicy,
+    observer_did: &str,
+    creator_id: &str,
+    guarantor_ids: &[&str],
+    is_known_offender: bool,
+    now_secs: Option<u64>,
+) -> Result<TrustEvaluation, WotError> {
+    if is_known_offender {
+        return Ok(TrustEvaluation {
+            score: 0.0,
+            shortest_hops: None,
+            paths: Vec::new(),
+            oldest_list_iat: None,
+            blocked_by_offender: true,
+        });
+    }
+
+    let canonical_observer = canonicalize_did(observer_did)?;
+    let canonical_creator = canonicalize_did(creator_id)?;
+
+    if canonical_observer == graph.self_did {
+        return evaluate_trust(
+            graph,
+            policy,
+            creator_id,
+            guarantor_ids,
+            is_known_offender,
+            now_secs,
+        );
+    }
+
+    if canonical_observer == canonical_creator {
+        return Ok(TrustEvaluation {
+            score: 1.0,
+            shortest_hops: Some(0),
+            paths: Vec::new(),
+            oldest_list_iat: None,
+            blocked_by_offender: false,
+        });
+    }
+
+    let observer_node_id = match graph.did_to_id.get(&canonical_observer) {
+        Some(&id) => id,
+        None => {
+            return Ok(TrustEvaluation {
+                score: 0.0,
+                shortest_hops: None,
+                paths: Vec::new(),
+                oldest_list_iat: None,
+                blocked_by_offender: false,
+            });
+        }
+    };
+
+    evaluate_trust_internal(
+        graph,
+        policy,
+        observer_node_id,
+        &canonical_creator,
+        guarantor_ids,
+        now_secs,
+    )
+}
+
+fn evaluate_trust_internal(
+    graph: &EgoGraphCache,
+    policy: &WotPolicy,
+    start_node_id: u32,
+    canonical_creator: &str,
+    guarantor_ids: &[&str],
+    now_secs: Option<u64>,
+) -> Result<TrustEvaluation, WotError> {
     // Clone graph to allow adding temporary guarantor bridges
     let mut eval_graph = graph.clone();
-    let creator_node_id = eval_graph.get_or_create_node(&canonical_creator);
+    let creator_node_id = eval_graph.get_or_create_node(canonical_creator);
 
     let mut dedup_guarantors = Vec::new();
     let mut seen_g = HashSet::new();
@@ -294,10 +379,10 @@ pub fn evaluate_trust(
         }
     }
 
-    // DFS path exploration from node 0 to creator_node_id
+    // DFS path exploration from start_node_id to creator_node_id
     let mut raw_paths: Vec<RawPath> = Vec::new();
     let mut visited: HashSet<u32> = HashSet::new();
-    visited.insert(0);
+    visited.insert(start_node_id);
 
     struct DfsContext<'a> {
         eval_graph: &'a EgoGraphCache,
@@ -393,13 +478,13 @@ pub fn evaluate_trust(
     };
 
     let mut state = PathState {
-        nodes: vec![0],
+        nodes: vec![start_node_id],
         levels: Vec::new(),
         edge_keys: Vec::new(),
     };
 
     dfs(
-        0,
+        start_node_id,
         1.0,
         &ctx,
         &mut visited,

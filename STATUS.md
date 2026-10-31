@@ -3,8 +3,8 @@ project: humoco-web-of-trust
 version: "0.1.0"
 phase: "active-development"
 health: "green"
-last_updated: "2026-10-30"
-blocks: ["CORE-002", "APP-002"]
+last_updated: "2026-10-31"
+blocks: []
 blocked_by: []
 priority_tasks:
   - id: "WOT-005"
@@ -45,10 +45,10 @@ priority_tasks:
     description: "Specified in ADR-0007: Dual Storage Architecture (raw_list_store for signatur-preserving routing + EgoGraphCache for sub-ms path evaluation)."
   - id: "WOT-004"
     title: "UI/UX designs for trust badge (Vertrauens-Ausweis)"
-    status: "open"
+    status: "done"
     priority: "medium"
     depends_on: []
-    description: "Visual design for trust indicators in the app based on 30/60/85 probability levels."
+    description: "Human-semantic contact trust levels (Unrated, Real Person, Acquaintance, Good Contact, Close Confidant) and color/percentage/bridge-contact <TrustBadge /> delivered across human-money-app (APP-002 / APP-044)."
   - id: "WOT-007"
     title: "ADR-006: Vertrauens-Propagation (Gossip)"
     status: "done"
@@ -61,19 +61,15 @@ priority_tasks:
 
 ## Current Focus
 
-**Rust crate implementation completed — ready for Core & App integration.**
-Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-Rust-Crate (`#![forbid(unsafe_code)]`) vollständig implementiert und getestet. Alle mathematischen und kryptographischen Invarianten aus ADR-00 bis ADR-07 (Dual-Storage-Architektur mit `TrustRegister` & `EgoGraphCache`, 2-Phasen Delta-Export `prepare_sync_package`/`commit_sync_receipt`, Handschlag-Import, Shannon-Pivoting Shared-Edge Factoring und Garbage Collection) sind realisiert. Der interaktive Simulator (`wot-simulation/index.html`) wurde ebenfalls um den echten Nadelöhr-Schutz (Shared-Edge Factoring) erweitert.
-
-Der Fokus verlagert sich nun auf die Anbindung der Konsumenten:
-1. **`CORE-002`**: Integration von `humoco-wot` in `human-money-core` via `TrustProvider`-Closure und Transaction Piggybacking Hooks.
-2. **`APP-002`**: Visualisierung von Vertrauenswerten und Badges im UI der `human-money-app`.
+**Full Core & App Ecosystem Integration Completed (`v0.1.0`).**
+Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-Rust-Crate (`#![forbid(unsafe_code)]`) vollständig implementiert, um `evaluate_trust_from_observer` / `TrustRegister::evaluate_voucher_for_observer` (für Gravitational Coin Selection `s_wot`) sowie einen Third-Party-Export-Guard in `prepare_sync_package` (kein Weiterleiten fremder SD-JWT-Listen an unbewertete oder Level-0-Empfänger) ergänzt und Ende-zu-Ende in `human-money-core` und `human-money-app` (`APP-002` / `APP-044`) integriert.
 
 ### MVP Priority Chain
 
 ```
-[WOT-001, WOT-002, WOT-006, WOT-008, WOT-009, WOT-005] (Done ✅)
-    ├── CORE-002 (Integrate TrustProvider into human-money-core) [ACTIVE / READY 🚀]
-    └── APP-002 (Trust Display UI in human-money-app) [ACTIVE / READY 🚀]
+[WOT-001, WOT-002, WOT-004, WOT-005, WOT-006, WOT-007, WOT-008, WOT-009] (Done ✅)
+    ├── CORE-010 (Bundle Piggybacking, Trust Containers & s_wot Coin Selection) [Done ✅]
+    └── APP-002 / APP-044 (AddressBook Ratings, <TrustBadge />, .wot Exchange & Piggybacking) [Done ✅]
 ```
 
 ## Architecture
@@ -104,8 +100,7 @@ Der Fokus verlagert sich nun auf die Anbindung der Konsumenten:
 
 ## Known Issues
 
-- Keine offenen Blocker in `humoco-web-of-trust`. Das Rust-Crate `humoco-wot` ist vollständig implementiert und getestet.
-- Anbindung an `human-money-core` (`CORE-002`) und UI (`APP-002`) stehen als nächste Integrationsschritte an.
+- Keine offenen Blocker in `humoco-web-of-trust`. Das Rust-Crate `humoco-wot` (15 Integrationstests inkl. Observer-Scoring & Export-Guard) ist vollständig implementiert und in Core & App integriert.
 
 ## Recent Milestones
 
@@ -119,9 +114,9 @@ Der Fokus verlagert sich nun auf die Anbindung der Konsumenten:
 - [x] Spezifikation der Rust-APIs und der `TrustProvider`-Kompatibilität für `human-money-core` (ADR-0007).
 - [x] **WOT-005**: Vollständige Rust-Implementierung des eigenständigen Crates `humoco-wot` (`#![forbid(unsafe_code)]`, WASM-kompatibel, Dual-Storage, 2-Phasen Export, Handschlag-Import, Shannon-Pivoting, Garbage Collection).
 - [x] Erweiterung des WoT-Simulators (`wot-simulation/index.html`) um echten Nadelöhr-Schutz (Shared-Edge Factoring nach ADR-01).
+- [x] **WOT-004 & App/Core-Härtung (2026-10-31)**: `evaluate_trust_from_observer` / `TrustRegister::evaluate_voucher_for_observer` für empfängerorientiertes Coin-Selection-Scoring (`s_wot`), Third-Party-Export-Guard in `prepare_sync_package` für unbewertete/Level-0-Empfänger sowie vollständige UI/UX-Umsetzung des Vertrauens-Ausweises (`<TrustBadge />`) in `human-money-app`.
 
 ## Next Milestones
 
-- [ ] **CORE-002**: Anbindung von `humoco-wot` an `human-money-core` (Reputations-Check & Transaction Piggybacking)
-- [ ] **APP-002**: Integration und UI-Visualisierung in `human-money-app`
-- [ ] **WOT-004**: UI/UX Designs für Vertrauens-Ausweis (Trust Badge) in der App
+- [ ] **CORE-002 / APP-003 (Post-MVP)**: Optionaler BLE/NFC Stranger-Discovery-Handschlag vor Ort
+- [ ] Optionale Zero-Trust-Relay-Anbindung für asynchronen SD-JWT-Austausch ohne direkten Dateitransfer

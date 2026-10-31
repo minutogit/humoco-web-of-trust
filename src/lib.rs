@@ -25,8 +25,8 @@ pub use identity::{
 };
 pub use register::{OwnTrustEntry, SentRecord, TrustRegister, WotPolicy};
 pub use scorer::{
-    evaluate_trust, exact_path_union_prob, TrustEvaluation, TrustPath, MAX_CANDIDATE_PATHS,
-    MIN_PATH_PROBABILITY,
+    evaluate_trust, evaluate_trust_from_observer, exact_path_union_prob, TrustEvaluation,
+    TrustPath, MAX_CANDIDATE_PATHS, MIN_PATH_PROBABILITY,
 };
 pub use sd_jwt::{
     compute_digest128, create_and_sign_sd_jwt, encode_disclosure, parse_and_verify_sd_jwt,

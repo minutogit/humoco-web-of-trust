@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::WotError;
 use crate::graph::EgoGraphCache;
 use crate::identity::{canonicalize_did, Did, WotSigner};
-use crate::scorer::{evaluate_trust, TrustEvaluation};
+use crate::scorer::{evaluate_trust, evaluate_trust_from_observer, TrustEvaluation};
 use crate::sd_jwt::{create_and_sign_sd_jwt, StoredSdJwt};
 
 /// Local Web of Trust configuration policy.
@@ -306,6 +306,27 @@ impl TrustRegister {
         evaluate_trust(
             &graph,
             &self.policy,
+            creator_id,
+            guarantor_ids,
+            is_known_offender,
+            now_secs,
+        )
+    }
+
+    /// Evaluates network trust for a voucher from an observer's perspective given its creator and guarantors.
+    pub fn evaluate_voucher_for_observer(
+        &self,
+        observer_did: &str,
+        creator_id: &str,
+        guarantor_ids: &[&str],
+        is_known_offender: bool,
+        now_secs: Option<u64>,
+    ) -> Result<TrustEvaluation, WotError> {
+        let graph = self.get_or_build_graph_cache();
+        evaluate_trust_from_observer(
+            &graph,
+            &self.policy,
+            observer_did,
             creator_id,
             guarantor_ids,
             is_known_offender,

@@ -158,46 +158,53 @@ impl TrustRegister {
         }
 
         // 2. Reachable third-party lists
-        for (iss, stored) in &self.raw_list_store {
-            if iss == &self.self_did {
-                continue;
-            }
+        let allow_third_party = match &canonical_recipient {
+            Some(rcpt) => self.own_contacts.get(rcpt).is_some_and(|e| e.level >= 1),
+            None => true,
+        };
 
-            let iss_node_id = match graph.did_to_id.get(iss) {
-                Some(&id) => id,
-                None => continue,
-            };
+        if allow_third_party {
+            for (iss, stored) in &self.raw_list_store {
+                if iss == &self.self_did {
+                    continue;
+                }
 
-            let dist = match distances.get(&iss_node_id) {
-                Some(&d) => d,
-                None => continue,
-            };
+                let iss_node_id = match graph.did_to_id.get(iss) {
+                    Some(&id) => id,
+                    None => continue,
+                };
 
-            let target_dist = dist.saturating_add(1);
-            if stored.max_hops < target_dist {
-                continue;
-            }
+                let dist = match distances.get(&iss_node_id) {
+                    Some(&d) => d,
+                    None => continue,
+                };
 
-            if let Some(wire) = stored.to_redacted_wire_string(target_dist) {
-                let fp = stored.disclosure_fingerprint(target_dist);
-                let already_sent = !force_full
-                    && canonical_recipient
-                        .as_ref()
-                        .and_then(|rcpt| self.sent_log.get(rcpt))
-                        .and_then(|log| log.get(iss))
-                        .is_some_and(|sent| {
-                            sent.version > stored.v
-                                || (sent.version == stored.v && sent.disclosure_fingerprint == fp)
+                let target_dist = dist.saturating_add(1);
+                if stored.max_hops < target_dist {
+                    continue;
+                }
+
+                if let Some(wire) = stored.to_redacted_wire_string(target_dist) {
+                    let fp = stored.disclosure_fingerprint(target_dist);
+                    let already_sent = !force_full
+                        && canonical_recipient
+                            .as_ref()
+                            .and_then(|rcpt| self.sent_log.get(rcpt))
+                            .and_then(|log| log.get(iss))
+                            .is_some_and(|sent| {
+                                sent.version > stored.v
+                                    || (sent.version == stored.v && sent.disclosure_fingerprint == fp)
+                            });
+
+                    if !already_sent {
+                        candidates.push(CandidateList {
+                            dist,
+                            issuer: iss.clone(),
+                            version: stored.v,
+                            wire_string: wire,
+                            fingerprint: fp,
                         });
-
-                if !already_sent {
-                    candidates.push(CandidateList {
-                        dist,
-                        issuer: iss.clone(),
-                        version: stored.v,
-                        wire_string: wire,
-                        fingerprint: fp,
-                    });
+                    }
                 }
             }
         }

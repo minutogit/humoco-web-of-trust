@@ -979,3 +979,258 @@ fn test_13_decoy_padding_multiples_and_input_hardening() {
         Err(WotError::InvalidHopLimit(9))
     ));
 }
+
+#[test]
+fn test_14_third_party_sync_export_guard() {
+    let (signer_alice, did_alice) = create_identity();
+    let (signer_bob, did_bob) = create_identity();
+    let (_, did_carol) = create_identity(); // untrusted / unrated
+    let (_, did_dave) = create_identity(); // level 0
+    let (_, did_eve) = create_identity(); // level 1
+    let (_, did_frank) = create_identity(); // Bob's contact
+
+    let now_secs = 1_700_000_000;
+    let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+
+    // 1. Alice configures direct trust:
+    // - Bob: level 2
+    // - Dave: level 0
+    // - Eve: level 1
+    // Carol is absent from own_contacts.
+    reg_alice
+        .set_contact_trust(&did_bob, 2, 4, now_secs)
+        .unwrap();
+    reg_alice
+        .set_contact_trust(&did_dave, 0, 4, now_secs)
+        .unwrap();
+    reg_alice
+        .set_contact_trust(&did_eve, 1, 4, now_secs)
+        .unwrap();
+    reg_alice.sign_own_list(&signer_alice, now_secs).unwrap();
+
+    // 2. Bob creates a signed trust list that includes Frank and Alice imports it into raw_list_store
+    let (wire_bob, _) = create_and_sign_sd_jwt(
+        &signer_bob,
+        1,
+        now_secs,
+        4,
+        &[(did_frank.clone(), 2, 4)],
+    )
+    .unwrap();
+
+    let stats = reg_alice
+        .import_sync_package(
+            &WotSyncPackage {
+                format_version: 1,
+                lists: vec![wire_bob],
+            },
+            Some(&did_bob),
+            now_secs,
+        )
+        .unwrap();
+    assert_eq!(stats.imported, 1);
+    assert!(reg_alice.raw_list_store.contains_key(&did_bob));
+
+    // 3. Case A: Untargeted export (recipient_did = None)
+    // Includes Alice's own list AND Bob's reachable third-party list
+    let (pkg_none, receipt_none) = reg_alice
+        .prepare_sync_package(None, None, false)
+        .unwrap();
+    assert_eq!(
+        pkg_none.lists.len(),
+        2,
+        "Untargeted export should include reachable third-party lists"
+    );
+    assert_eq!(receipt_none.entries.len(), 2);
+
+    // 4. Case B: Recipient is unrated / absent (Carol)
+    // Must NOT export Bob's third-party list; ONLY Alice's own signed list
+    let (pkg_carol, receipt_carol) = reg_alice
+        .prepare_sync_package(Some(&did_carol), None, false)
+        .unwrap();
+    assert_eq!(
+        pkg_carol.lists.len(),
+        1,
+        "Unrated recipient must not receive third-party lists"
+    );
+    assert_eq!(receipt_carol.entries.len(), 1);
+    assert_eq!(receipt_carol.entries[0].issuer_did, did_alice);
+
+    // 5. Case C: Recipient is rated Level 0 (Dave)
+    // Must NOT export Bob's third-party list; ONLY Alice's own signed list
+    let (pkg_dave, receipt_dave) = reg_alice
+        .prepare_sync_package(Some(&did_dave), None, false)
+        .unwrap();
+    assert_eq!(
+        pkg_dave.lists.len(),
+        1,
+        "Level 0 recipient must not receive third-party lists"
+    );
+    assert_eq!(receipt_dave.entries.len(), 1);
+    assert_eq!(receipt_dave.entries[0].issuer_did, did_alice);
+
+    // 6. Case D: Recipient is rated Level >= 1 (Eve)
+    // Must export both Alice's own signed list AND Bob's reachable third-party list
+    let (pkg_eve, receipt_eve) = reg_alice
+        .prepare_sync_package(Some(&did_eve), None, false)
+        .unwrap();
+    assert_eq!(
+        pkg_eve.lists.len(),
+        2,
+        "Level 1 recipient must receive reachable third-party lists"
+    );
+    let issuers: Vec<Did> = receipt_eve
+        .entries
+        .into_iter()
+        .map(|e| e.issuer_did)
+        .collect();
+    assert!(issuers.contains(&did_alice));
+    assert!(issuers.contains(&did_bob));
+}
+
+#[test]
+fn test_15_evaluate_voucher_for_observer() {
+    use humoco_wot::evaluate_trust_from_observer;
+
+    let (_signer_me, did_me) = create_identity();
+    let (signer_obs, did_obs) = create_identity();
+    let (_, did_creator) = create_identity();
+    let (_, did_guarantor) = create_identity();
+    let (_, did_unknown) = create_identity();
+
+    let now_secs = 1_700_000_000;
+    let mut reg = TrustRegister::new(&did_me, WotPolicy::default()).unwrap();
+
+    // 1. Observer == Creator: returns 1.0, shortest_hops = Some(0)
+    // 1a. Bare DIDs
+    let eval_same = reg
+        .evaluate_voucher_for_observer(&did_creator, &did_creator, &[], false, Some(now_secs))
+        .unwrap();
+    assert_eq!(eval_same.score, 1.0);
+    assert_eq!(eval_same.shortest_hops, Some(0));
+    assert!(eval_same.paths.is_empty());
+    assert!(!eval_same.blocked_by_offender);
+
+    // 1b. Prefixed observer vs bare creator
+    let pref_obs = format!("tenant-1:chk@{}", did_creator);
+    let eval_pref1 = reg
+        .evaluate_voucher_for_observer(&pref_obs, &did_creator, &[], false, Some(now_secs))
+        .unwrap();
+    assert_eq!(eval_pref1.score, 1.0);
+    assert_eq!(eval_pref1.shortest_hops, Some(0));
+
+    // 1c. Bare observer vs prefixed creator
+    let pref_creator = format!("pos-store:chk@{}", did_creator);
+    let eval_pref2 = reg
+        .evaluate_voucher_for_observer(&did_creator, &pref_creator, &[], false, Some(now_secs))
+        .unwrap();
+    assert_eq!(eval_pref2.score, 1.0);
+    assert_eq!(eval_pref2.shortest_hops, Some(0));
+
+    // 2. Known offender veto: returns score 0.0, blocked_by_offender = true
+    let eval_offender = reg
+        .evaluate_voucher_for_observer(&did_obs, &did_creator, &[], true, Some(now_secs))
+        .unwrap();
+    assert_eq!(eval_offender.score, 0.0);
+    assert_eq!(eval_offender.shortest_hops, None);
+    assert!(eval_offender.paths.is_empty());
+    assert!(eval_offender.blocked_by_offender);
+
+    // 3. Unknown observer in graph: returns score 0.0, shortest_hops = None, no error
+    let eval_unknown = reg
+        .evaluate_voucher_for_observer(&did_unknown, &did_creator, &[], false, Some(now_secs))
+        .unwrap();
+    assert_eq!(eval_unknown.score, 0.0);
+    assert_eq!(eval_unknown.shortest_hops, None);
+    assert!(eval_unknown.paths.is_empty());
+    assert!(!eval_unknown.blocked_by_offender);
+
+    // 4. Observer is self (did_me)
+    reg.set_contact_trust(&did_creator, 2, 4, now_secs).unwrap(); // 60%
+    let eval_self = reg
+        .evaluate_voucher_for_observer(&did_me, &did_creator, &[], false, Some(now_secs))
+        .unwrap();
+    let eval_direct = reg
+        .evaluate_voucher(&did_creator, &[], false, Some(now_secs))
+        .unwrap();
+    assert_eq!(eval_self.score, eval_direct.score);
+    assert_eq!(eval_self.shortest_hops, eval_direct.shortest_hops);
+
+    // 5. Observer trusts creator directly via imported SD-JWT list:
+    // Me trusts Observer with Level 1 (30%) so list is accepted
+    reg.set_contact_trust(&did_obs, 1, 4, now_secs).unwrap();
+
+    let obs_list_iat = 1_700_000_050;
+    let (wire_obs, _) = create_and_sign_sd_jwt(
+        &signer_obs,
+        1,
+        obs_list_iat,
+        4,
+        &[
+            (did_creator.clone(), 2, 4),   // 60% direct trust from Observer to Creator
+            (did_guarantor.clone(), 3, 4), // 85% trust from Observer to Guarantor
+        ],
+    )
+    .unwrap();
+
+    reg.import_sync_package(
+        &WotSyncPackage {
+            format_version: 1,
+            lists: vec![wire_obs],
+        },
+        Some(&did_obs),
+        now_secs + 100,
+    )
+    .unwrap();
+
+    // From Observer's perspective: direct trust to Creator is Level 2 (60%)
+    let eval_obs_direct = reg
+        .evaluate_voucher_for_observer(&did_obs, &did_creator, &[], false, Some(now_secs))
+        .unwrap();
+    assert!((eval_obs_direct.score - 0.60).abs() < 1e-6);
+    assert_eq!(eval_obs_direct.shortest_hops, Some(1));
+    assert_eq!(eval_obs_direct.oldest_list_iat, Some(obs_list_iat));
+    assert_eq!(eval_obs_direct.paths.len(), 1);
+    assert_eq!(
+        eval_obs_direct.paths[0].hops,
+        vec![did_obs.clone(), did_creator.clone()]
+    );
+    assert_eq!(eval_obs_direct.paths[0].edge_levels, vec![2]);
+
+    // 6. Observer trusts creator via guarantor bridge:
+    // Suppose a separate creator identity that observer does NOT trust directly:
+    let (_, did_creator2) = create_identity();
+    let eval_obs_guarantor = reg
+        .evaluate_voucher_for_observer(
+            &did_obs,
+            &did_creator2,
+            &[&did_guarantor],
+            false,
+            Some(now_secs),
+        )
+        .unwrap();
+    // Path: Observer -(85% Level 3)-> Guarantor -(85% guarantor weight)-> Creator2
+    // Expected score = 0.85 * 0.85 = 0.7225
+    let expected_g_score = 0.85 * 0.85;
+    assert!((eval_obs_guarantor.score - expected_g_score).abs() < 1e-4);
+    assert_eq!(eval_obs_guarantor.shortest_hops, Some(2));
+    assert_eq!(eval_obs_guarantor.oldest_list_iat, Some(obs_list_iat));
+    assert_eq!(
+        eval_obs_guarantor.paths[0].hops,
+        vec![did_obs.clone(), did_guarantor.clone(), did_creator2.clone()]
+    );
+
+    // 7. Verify standalone function evaluate_trust_from_observer
+    let graph = reg.get_or_build_graph_cache();
+    let eval_standalone = evaluate_trust_from_observer(
+        &graph,
+        &reg.policy,
+        &did_obs,
+        &did_creator,
+        &[],
+        false,
+        Some(now_secs),
+    )
+    .unwrap();
+    assert!((eval_standalone.score - 0.60).abs() < 1e-6);
+}
