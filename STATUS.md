@@ -3,10 +3,16 @@ project: humoco-web-of-trust
 version: "0.1.0"
 phase: "active-development"
 health: "green"
-last_updated: "2026-10-31"
+last_updated: "2026-11-01"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "WOT-010"
+    title: "Global Hop Policy, 1-Year Freshness Grace + Decay & BinaryFuse64 Provider Seals (ADR-08)"
+    status: "done"
+    priority: "high"
+    depends_on: ["WOT-005", "WOT-007"]
+    description: "Added `TrustRegister::set_own_list_max_hops` (`own_list_max_hops = 3` default, decoupled `max_eval_depth = 5` / `max_import_depth = 5` preserving guarantor bridges at 1 hop), 1-year grace period + 1-year half-life freshness curve (`freshness_grace_secs = 31_536_000`), `O(N)` `continue`-based sync package packing, pure-Rust safe `BinaryFuse64` signed provider filters (`wot-provider-filter+v1`, $2^{-64}$ anti-grinding false-positive rate, zero new Cargo dependencies) evaluated across both voucher creators and guarantors under Shannon Shared-Edge Factoring, and German `ADR-08` (`docs/adr/adr-08-dienstleister-pruefsiegel-binary-fuse.md`)."
   - id: "WOT-005"
     title: "Rust implementation of WoT crate (humoco-wot)"
     status: "done"
@@ -61,15 +67,18 @@ priority_tasks:
 
 ## Current Focus
 
-**Full Core & App Ecosystem Integration Completed (`v0.1.0`).**
-Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-Rust-Crate (`#![forbid(unsafe_code)]`) vollständig implementiert, um `evaluate_trust_from_observer` / `TrustRegister::evaluate_voucher_for_observer` (für Gravitational Coin Selection `s_wot`) sowie einen Third-Party-Export-Guard in `prepare_sync_package` (kein Weiterleiten fremder SD-JWT-Listen an unbewertete oder Level-0-Empfänger) ergänzt und Ende-zu-Ende in `human-money-core` und `human-money-app` (`APP-002` / `APP-044`) integriert.
+**Full Core & App Ecosystem Integration & Provider Seals Completed (`v0.1.0` / `WOT-010`).**
+Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-Rust-Crate (`#![forbid(unsafe_code)]`) vollständig implementiert:
+- **Global Hop Policy & Freshness Decay (`WOT-010`)**: Einstellbare Reichweite `TrustRegister::set_own_list_max_hops` (`own_list_max_hops = 3` Standard, entkoppelt von `max_eval_depth = 5` / `max_import_depth = 5` mit Beibehaltung von 1-Hop-Bürgschaftsbrücken), 1-Jahr-Schonfrist (`freshness_grace_secs = 31_536_000`) plus 1-Jahr-Halbwertszeit-Dämpfungskurve und $O(N)$ `continue`-basiertes Packen in `prepare_sync_package`.
+- **Pure-Rust Safe `BinaryFuse64` Provider Seals (`ADR-08`)**: Signierte Verbands- und Prüfsiegelfilter (`wot-provider-filter+v1`, $2^{-64}$ Falsch-Positiv-Rate gegen Key-Grinding, keine neuen Cargo-Dependencies) zur kompakten Offline-Zertifizierung tausender Erzeuger/Dienstleister unter Shannon-Shared-Edge-Factoring.
+- **Core & App Hooks**: `evaluate_trust_from_observer` / `TrustRegister::evaluate_voucher_for_observer` (für Gravitational Coin Selection `s_wot`) sowie Third-Party-Export-Guard in `prepare_sync_package` integriert in `human-money-core` und `human-money-app` (`APP-044` / `APP-052`).
 
 ### MVP Priority Chain
 
 ```
-[WOT-001, WOT-002, WOT-004, WOT-005, WOT-006, WOT-007, WOT-008, WOT-009] (Done ✅)
-    ├── CORE-010 (Bundle Piggybacking, Trust Containers & s_wot Coin Selection) [Done ✅]
-    └── APP-002 / APP-044 (AddressBook Ratings, <TrustBadge />, .wot Exchange & Piggybacking) [Done ✅]
+[WOT-001, WOT-002, WOT-004, WOT-005, WOT-006, WOT-007, WOT-008, WOT-009, WOT-010] (Done ✅)
+    ├── CORE-010 / CORE-011 (Sync Piggybacking, Multi-Recipient Trust Containers & s_wot) [Done ✅]
+    └── APP-044 / APP-052 (Global Reach Selector, TrustBadges, Passwordless .wot & Provider Seals) [Done ✅]
 ```
 
 ## Architecture
@@ -83,6 +92,7 @@ Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-
   - [`0005`: Reziprokes Routing](docs/adr/adr-05-reziprokes-routing-sd-jwt.md) (Distanzbasierte Redaktion ohne Zähler-Mutation & Tit-for-Tat-Policy)
   - [`0006`: Vertrauens-Propagation](docs/adr/adr-06-asynchrones-gossip-protokoll.md) (Gossip, Sent-Log Delta-Sync, topologischer Spam-Filter & Union-Merge)
   - [`0007`: Datenstruktur, Speicher & Schnittstellen](docs/adr/adr-07-datenstruktur-speicher-und-schnittstellen.md) (Dual-Storage `TrustRegister` + `EgoGraphCache`, Handschlag & Core-Schnittstellen)
+  - [`0008` / `ADR-08`: Dienstleister-Prüfsiegel & Verbände](docs/adr/adr-08-dienstleister-pruefsiegel-binary-fuse.md) (Pure-Rust BinaryFuse64 Filter, $2^{-64}$ Anti-Grinding, Shannon-Integration)
 - **Research documents**: Concept canvas, Stranger discovery protocol, Game theory & attack vectors
 - **WoT Simulator**: Interactive HTML simulation for network visualization (`wot-simulation/index.html`)
 
@@ -115,6 +125,7 @@ Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-
 - [x] **WOT-005**: Vollständige Rust-Implementierung des eigenständigen Crates `humoco-wot` (`#![forbid(unsafe_code)]`, WASM-kompatibel, Dual-Storage, 2-Phasen Export, Handschlag-Import, Shannon-Pivoting, Garbage Collection).
 - [x] Erweiterung des WoT-Simulators (`wot-simulation/index.html`) um echten Nadelöhr-Schutz (Shared-Edge Factoring nach ADR-01).
 - [x] **WOT-004 & App/Core-Härtung (2026-10-31)**: `evaluate_trust_from_observer` / `TrustRegister::evaluate_voucher_for_observer` für empfängerorientiertes Coin-Selection-Scoring (`s_wot`), Third-Party-Export-Guard in `prepare_sync_package` für unbewertete/Level-0-Empfänger sowie vollständige UI/UX-Umsetzung des Vertrauens-Ausweises (`<TrustBadge />`) in `human-money-app`.
+- [x] **WOT-010: Global Hop Policy, 1-Year Freshness Grace + Decay & BinaryFuse64 Provider Seals (ADR-08, 2026-11-01)**: Added `TrustRegister::set_own_list_max_hops` (`own_list_max_hops = 3` default, decoupled `max_eval_depth = 5` / `max_import_depth = 5` preserving guarantor bridges at 1 hop), 1-year grace period + 1-year half-life freshness curve (`freshness_grace_secs = 31_536_000`), `O(N)` `continue`-based sync package packing, pure-Rust safe `BinaryFuse64` signed provider filters (`wot-provider-filter+v1`, $2^{-64}$ anti-grinding false-positive rate, zero new Cargo dependencies) evaluated across both voucher creators and guarantors under Shannon Shared-Edge Factoring, and German `ADR-08` (`docs/adr/adr-08-dienstleister-pruefsiegel-binary-fuse.md`).
 
 ## Next Milestones
 

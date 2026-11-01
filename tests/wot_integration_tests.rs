@@ -8,6 +8,7 @@ use humoco_wot::identity::{
     canonicalize_did, did_from_verifying_key, extract_verifying_key, Did, Ed25519WotSigner,
     WotSigner,
 };
+use humoco_wot::provider_filter::create_and_sign_provider_filter;
 use humoco_wot::register::{TrustRegister, WotPolicy};
 use humoco_wot::sd_jwt::{
     create_and_sign_sd_jwt, encode_disclosure, parse_and_verify_sd_jwt, DECOY_BUCKET_MULTIPLE,
@@ -1233,4 +1234,282 @@ fn test_15_evaluate_voucher_for_observer() {
     )
     .unwrap();
     assert!((eval_standalone.score - 0.60).abs() < 1e-6);
+}
+
+#[test]
+fn test_16_global_hop_management_and_guarantor_bridge_retention() {
+    let (_signer_me, did_me) = create_identity();
+    let (_, did_bob) = create_identity();
+    let (_, did_carol) = create_identity();
+    let (_, did_creator) = create_identity();
+
+    let now_secs = 1_700_000_000;
+    let mut reg = TrustRegister::new(&did_me, WotPolicy::default()).unwrap();
+
+    // Setup direct contacts: Bob (Level 2), Carol (Level 0)
+    reg.set_contact_trust(&did_bob, 2, 4, now_secs).unwrap();
+    reg.set_contact_trust(&did_carol, 0, 4, now_secs).unwrap();
+    reg.own_list_dirty = false;
+
+    // Reject invalid hops
+    assert!(matches!(reg.set_own_list_max_hops(0, now_secs + 10), Err(WotError::InvalidHopLimit(0))));
+    assert!(matches!(reg.set_own_list_max_hops(9, now_secs + 10), Err(WotError::InvalidHopLimit(9))));
+
+    // Set global max hops to 1
+    reg.set_own_list_max_hops(1, now_secs + 10).unwrap();
+    assert_eq!(reg.policy.own_list_max_hops, 1);
+    assert_eq!(reg.own_contacts.get(&did_bob).unwrap().desired_hops, 1);
+    assert_eq!(reg.own_contacts.get(&did_bob).unwrap().updated_at, now_secs + 10);
+    // Level 0 contact was not modified
+    assert_eq!(reg.own_contacts.get(&did_carol).unwrap().desired_hops, 4);
+    assert!(reg.own_list_dirty);
+
+    // Invariant: max_eval_depth and max_import_depth MUST NOT shrink (remain at least 5)
+    assert!(reg.policy.max_eval_depth >= 5);
+    assert!(reg.policy.max_import_depth >= 5);
+
+    // Guarantor bridge test: Even though own_list_max_hops is 1, a 2-hop voucher guarantee
+    // Me -(0.60)-> Bob -(0.85 guarantor_weight)-> Creator MUST still evaluate successfully!
+    let eval = reg
+        .evaluate_voucher(&did_creator, &[&did_bob], false, Some(now_secs + 20))
+        .unwrap();
+    assert_eq!(eval.shortest_hops, Some(2));
+    let expected_score = 0.60 * 0.85;
+    assert!((eval.score - expected_score).abs() < 1e-4);
+}
+
+#[test]
+fn test_17_age_decay_grace_period_and_half_life() {
+    let (_signer_me, did_me) = create_identity();
+    let (signer_bob, did_bob) = create_identity();
+    let (_, did_carol) = create_identity();
+
+    let now_secs = 1_700_000_000;
+    let one_year = 31_536_000_u64;
+
+    let policy = WotPolicy {
+        freshness_grace_secs: one_year,
+        freshness_half_life_secs: Some(one_year),
+        ..Default::default()
+    };
+    let mut reg = TrustRegister::new(&did_me, policy).unwrap();
+
+    // Me trusts Bob Level 3 (85%)
+    reg.set_contact_trust(&did_bob, 3, 4, now_secs).unwrap();
+
+    // Case 1: Bob's list iat is 364 days ago (within 1-year grace period)
+    let iat_fresh = now_secs - (one_year - 86400);
+    let (wire_fresh, _) = create_and_sign_sd_jwt(&signer_bob, 1, iat_fresh, 4, &[(did_carol.clone(), 3, 4)]).unwrap();
+    reg.raw_list_store.clear();
+    reg.import_sync_package(&WotSyncPackage { format_version: 1, lists: vec![wire_fresh] }, Some(&did_bob), now_secs).unwrap();
+
+    let eval_fresh = reg.evaluate_did(&did_carol, Some(now_secs)).unwrap();
+    let full_strength = 0.85 * 0.85;
+    assert!((eval_fresh.score - full_strength).abs() < 1e-4, "Expected full strength, got {}", eval_fresh.score);
+
+    // Case 2: Bob's list iat is 2 years ago (1 year grace + 1 year half-life -> 50% decay)
+    let iat_2yr = now_secs - (2 * one_year);
+    let (wire_2yr, _) = create_and_sign_sd_jwt(&signer_bob, 2, iat_2yr, 4, &[(did_carol.clone(), 3, 4)]).unwrap();
+    reg.raw_list_store.clear();
+    reg.import_sync_package(&WotSyncPackage { format_version: 1, lists: vec![wire_2yr] }, Some(&did_bob), now_secs).unwrap();
+
+    let eval_2yr = reg.evaluate_did(&did_carol, Some(now_secs)).unwrap();
+    let half_strength = full_strength * 0.5;
+    assert!((eval_2yr.score - half_strength).abs() < 1e-4, "Expected half strength, got {}", eval_2yr.score);
+
+    // Case 3: Bob's list iat is 3 years ago (1 year grace + 2 years half-life -> 25% decay)
+    let iat_3yr = now_secs - (3 * one_year);
+    let (wire_3yr, _) = create_and_sign_sd_jwt(&signer_bob, 3, iat_3yr, 4, &[(did_carol.clone(), 3, 4)]).unwrap();
+    reg.raw_list_store.clear();
+    reg.import_sync_package(&WotSyncPackage { format_version: 1, lists: vec![wire_3yr] }, Some(&did_bob), now_secs).unwrap();
+
+    let eval_3yr = reg.evaluate_did(&did_carol, Some(now_secs)).unwrap();
+    let quarter_strength = full_strength * 0.25;
+    assert!((eval_3yr.score - quarter_strength).abs() < 1e-4, "Expected quarter strength, got {}", eval_3yr.score);
+}
+
+#[test]
+fn test_18_sync_package_size_limit_continue_behavior() {
+    let (signer_me, did_me) = create_identity();
+    let (mut signer_large, mut did_large) = create_identity();
+    let (mut signer_small, mut did_small) = create_identity();
+    let (_, did_dave) = create_identity();
+
+    // Ensure did_large sorts lexicographically before did_small so it is evaluated first
+    if did_large > did_small {
+        std::mem::swap(&mut signer_large, &mut signer_small);
+        std::mem::swap(&mut did_large, &mut did_small);
+    }
+
+    let now_secs = 1_700_000_000;
+    let mut reg = TrustRegister::new(&did_me, WotPolicy::default()).unwrap();
+
+    // Me trusts Large, Small, and Dave (Level >= 1 so third-party sync is allowed)
+    reg.set_contact_trust(&did_large, 2, 4, now_secs).unwrap();
+    reg.set_contact_trust(&did_small, 2, 4, now_secs).unwrap();
+    reg.set_contact_trust(&did_dave, 2, 4, now_secs).unwrap();
+    reg.sign_own_list(&signer_me, now_secs).unwrap();
+
+    // Large list: list with many disclosures (large byte footprint)
+    let mut large_contacts = Vec::new();
+    for _ in 0..15 {
+        let (_, dummy) = create_identity();
+        large_contacts.push((dummy, 1, 4));
+    }
+    let (wire_large, _) = create_and_sign_sd_jwt(&signer_large, 1, now_secs, 4, &large_contacts).unwrap();
+
+    // Small list: minimal empty list
+    let (wire_small, _) = create_and_sign_sd_jwt(&signer_small, 1, now_secs, 4, &[]).unwrap();
+
+    reg.import_sync_package(
+        &WotSyncPackage {
+            format_version: 1,
+            lists: vec![wire_large.clone(), wire_small.clone()],
+        },
+        None,
+        now_secs,
+    )
+    .unwrap();
+
+    // Set max_bytes such that Alice's own list + Small list fit, but Large list does NOT fit!
+    let own_wire = reg.own_signed_list.as_ref().unwrap().to_redacted_wire_string(1).unwrap();
+    let base_len = 31;
+    let own_len = own_wire.len() + 2;
+    let small_len = wire_small.len() + 3;
+    let tight_limit = base_len + own_len + small_len + 10;
+
+    let (pkg, receipt) = reg.prepare_sync_package(Some(&did_dave), Some(tight_limit), true).unwrap();
+
+    // Verify Large list was evaluated first and skipped, but Small list was still included via continue!
+    let issuers: Vec<Did> = receipt.entries.into_iter().map(|e| e.issuer_did).collect();
+    assert!(issuers.contains(&did_me), "Own list must be included");
+    assert!(issuers.contains(&did_small), "Small list must be included via continue");
+    assert!(!issuers.contains(&did_large), "Large list must have been skipped due to size limit");
+    assert_eq!(pkg.lists.len(), 2);
+}
+
+#[test]
+fn test_19_provider_filter_integration_and_voucher_evaluation() {
+    let (_signer_me, did_me) = create_identity();
+    let (signer_prov, did_prov) = create_identity();
+    let (_, did_creator) = create_identity();
+    let (_, did_guarantor) = create_identity();
+
+    let now_secs = 1_700_000_000;
+    let mut reg = TrustRegister::new(&did_me, WotPolicy::default()).unwrap();
+
+    // 1. Create and sign provider filter:
+    // Provider certifies Creator at Level 3 (85%) and Guarantor at Level 2 (60%)
+    let members = vec![
+        (did_creator.clone(), 3),
+        (did_guarantor.clone(), 2),
+    ];
+    let filter_v1 = create_and_sign_provider_filter(
+        &signer_prov,
+        "Regional Handwerker Verband",
+        10,
+        now_secs,
+        Some("https://verband.org/registry".to_string()),
+        &members,
+    )
+    .expect("create provider filter");
+
+    // Import provider filter into TrustRegister
+    let imported_did = reg.import_provider_filter(&filter_v1, now_secs).expect("import filter");
+    assert_eq!(imported_did, did_prov);
+
+    // Verify local_trust_level is initially 0 -> evaluation should not use it yet
+    let eval_untrusted = reg.evaluate_voucher(&did_creator, &[], false, Some(now_secs)).unwrap();
+    assert_eq!(eval_untrusted.score, 0.0);
+
+    // Set local trust level for provider to Level 2 (60%)
+    reg.set_provider_trust(&did_prov, 2).unwrap();
+
+    // Evaluation 1: Creator match in provider filter
+    // Path: Me -(60% Level 2)-> Provider -(85% Level 3)-> Creator
+    // Score: 0.60 * 0.85 = 0.51, Hops = 2
+    let eval_creator = reg.evaluate_voucher(&did_creator, &[], false, Some(now_secs)).unwrap();
+    assert_eq!(eval_creator.shortest_hops, Some(2));
+    let expected_creator_score = 0.60 * 0.85;
+    assert!((eval_creator.score - expected_creator_score).abs() < 1e-4);
+
+    // Evaluation 2: Guarantor match in provider filter
+    // Creator is unknown, but Guarantor is certified by Provider
+    let (_, did_unknown_creator) = create_identity();
+    // Path: Me -(60% Level 2)-> Provider -(60% Level 2)-> Guarantor -(85% gw)-> UnknownCreator
+    // Score: 0.60 * 0.60 * 0.85 = 0.306, Hops = 3
+    let eval_guar = reg
+        .evaluate_voucher(&did_unknown_creator, &[&did_guarantor], false, Some(now_secs))
+        .unwrap();
+    assert_eq!(eval_guar.shortest_hops, Some(3));
+    let expected_guar_score = 0.60 * 0.60 * 0.85;
+    assert!((eval_guar.score - expected_guar_score).abs() < 1e-4);
+
+    // Evaluation 3: Bottleneck cap enforcement
+    // Me trusts Provider with Level 1 (30%).
+    // Both Creator AND Guarantor are certified at Level 3 (85%).
+    reg.set_provider_trust(&did_prov, 1).unwrap();
+    let eval_bottleneck = reg
+        .evaluate_voucher(&did_creator, &[&did_guarantor], false, Some(now_secs))
+        .unwrap();
+    // Shannon factoring bottleneck: Score CANNOT exceed User's trust in Provider (0.30)!
+    assert!(
+        eval_bottleneck.score <= 0.300000001,
+        "Score must not exceed 0.30 bottleneck, got {}",
+        eval_bottleneck.score
+    );
+
+    // 2. Tampering test
+    let mut tampered = filter_v1.clone();
+    tampered.replace_range(30..35, "XXXXX");
+    assert!(reg.import_provider_filter(&tampered, now_secs).is_err());
+
+    // 3. Rollback rejection: incoming version v=9 < existing v=10
+    let filter_v_old = create_and_sign_provider_filter(
+        &signer_prov,
+        "Regional Handwerker Verband",
+        9,
+        now_secs,
+        None,
+        &members,
+    )
+    .unwrap();
+    assert!(matches!(
+        reg.import_provider_filter(&filter_v_old, now_secs),
+        Err(WotError::LimitExceeded(_))
+    ));
+
+    // 4. Update with higher version v=11: preserves local_trust_level
+    let filter_v_new = create_and_sign_provider_filter(
+        &signer_prov,
+        "Regional Handwerker Verband",
+        11,
+        now_secs,
+        None,
+        &members,
+    )
+    .unwrap();
+    reg.import_provider_filter(&filter_v_new, now_secs).unwrap();
+    assert_eq!(reg.provider_filters.get(&did_prov).unwrap().local_trust_level, 1);
+
+    // 5. Equivocation rejection: same version v=11 with different members
+    let (_, did_other) = create_identity();
+    let filter_equiv = create_and_sign_provider_filter(
+        &signer_prov,
+        "Regional Handwerker Verband",
+        11,
+        now_secs,
+        None,
+        &[(did_other, 3)],
+    )
+    .unwrap();
+    assert!(matches!(
+        reg.import_provider_filter(&filter_equiv, now_secs),
+        Err(WotError::EquivocationDetected { .. })
+    ));
+
+    // 6. Remove provider filter
+    let removed = reg.remove_provider_filter(&did_prov).unwrap();
+    assert!(removed);
+    assert!(!reg.provider_filters.contains_key(&did_prov));
 }

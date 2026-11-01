@@ -33,6 +33,12 @@ Gültige Bürgen-Signaturen (`role == "guarantor"`) auf einem L1-Gutschein füge
 ### Betrugs-Veto (KnownOffender)
 Veto-Mechanismus im `TrustProvider`: Ist der Herausgeber eines Gutscheins im lokalen Konfliktspeicher als überführter Betrüger (z. B. nachgewiesener Double-Spend via SST V4) registriert, wird der Gutschein-Vertrauenswert sofort und unwiderruflich auf 0 % gesetzt (siehe [ADR 0001](./adr-01-pfadberechnung-und-vertrauenswahrscheinlichkeiten.md) und [ADR 0007](./adr-07-datenstruktur-speicher-und-schnittstellen.md)).
 
+### Dienstleister-Prüfsiegel (Provider Filter)
+Ein von Organisationen, Verbänden oder Kammern signiertes Dokument (`typ: "wot-provider-filter+v1"`), das tausende Mitglieder und deren Zertifizierungsstufe kompakt via Binary Fuse Filter bündelt, ohne Megabytes an Einzeldaten übertragen zu müssen (siehe [ADR 0008](./adr-08-dienstleister-pruefsiegel-binary-fuse.md)).
+
+### 64-Bit Binary Fuse Filter (BinaryFuse64)
+Hocheffiziente, statische Filter-Datenstruktur nach Graf & Lemire mit 3-Wege-XOR-Peeling und 64-Bit-Fingerabdrücken ($\epsilon \approx 5{,}4 \times 10^{-20}$), die mathematisch jedes Key-Grinding verhindert und $O(1)$-Mitgliedschaftsabfragen ermöglicht (siehe [ADR 0008](./adr-08-dienstleister-pruefsiegel-binary-fuse.md)).
+
 ---
 
 ## 3. Metriken & Kalkulation

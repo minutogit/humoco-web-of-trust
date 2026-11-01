@@ -1,9 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::error::WotError;
 use crate::graph::{level_to_factor, EgoGraphCache};
 use crate::identity::{canonicalize_did, Did};
+use crate::provider_filter::StoredProviderFilter;
 use crate::register::WotPolicy;
 
 pub const MAX_CANDIDATE_PATHS: usize = 32;
@@ -202,6 +203,27 @@ pub fn evaluate_trust(
     is_known_offender: bool,
     now_secs: Option<u64>,
 ) -> Result<TrustEvaluation, WotError> {
+    evaluate_trust_with_providers(
+        graph,
+        policy,
+        None,
+        creator_id,
+        guarantor_ids,
+        is_known_offender,
+        now_secs,
+    )
+}
+
+/// Evaluates network trust from `graph` with optional provider filter seals.
+pub fn evaluate_trust_with_providers(
+    graph: &EgoGraphCache,
+    policy: &WotPolicy,
+    provider_filters: Option<&BTreeMap<Did, StoredProviderFilter>>,
+    creator_id: &str,
+    guarantor_ids: &[&str],
+    is_known_offender: bool,
+    now_secs: Option<u64>,
+) -> Result<TrustEvaluation, WotError> {
     if is_known_offender {
         return Ok(TrustEvaluation {
             score: 0.0,
@@ -227,6 +249,7 @@ pub fn evaluate_trust(
     evaluate_trust_internal(
         graph,
         policy,
+        provider_filters,
         0,
         &canonical_creator,
         guarantor_ids,
@@ -294,6 +317,7 @@ pub fn evaluate_trust_from_observer(
     evaluate_trust_internal(
         graph,
         policy,
+        None,
         observer_node_id,
         &canonical_creator,
         guarantor_ids,
@@ -304,12 +328,13 @@ pub fn evaluate_trust_from_observer(
 fn evaluate_trust_internal(
     graph: &EgoGraphCache,
     policy: &WotPolicy,
+    provider_filters: Option<&BTreeMap<Did, StoredProviderFilter>>,
     start_node_id: u32,
     canonical_creator: &str,
     guarantor_ids: &[&str],
     now_secs: Option<u64>,
 ) -> Result<TrustEvaluation, WotError> {
-    // Clone graph to allow adding temporary guarantor bridges
+    // Clone graph to allow adding temporary guarantor bridges and provider seals
     let mut eval_graph = graph.clone();
     let creator_node_id = eval_graph.get_or_create_node(canonical_creator);
 
@@ -321,6 +346,55 @@ fn evaluate_trust_internal(
             dedup_guarantors.push(can_g);
         }
     }
+
+    // Inject provider filters when evaluating from local perspective (start_node_id == 0)
+    if start_node_id == 0
+        && let Some(filters) = provider_filters
+    {
+        for (prov_did, prov) in filters {
+            let own_contact_lvl = eval_graph
+                .did_to_id
+                .get(prov_did)
+                .and_then(|&p_id| {
+                    eval_graph
+                        .outgoing
+                        .first()
+                        .and_then(|edges| edges.iter().find(|e| e.to == p_id).map(|e| e.level))
+                })
+                .unwrap_or(0);
+
+                let user_level = prov.local_trust_level.max(own_contact_lvl);
+                if user_level == 0 {
+                    continue;
+                }
+
+                let prov_node_id = eval_graph.get_or_create_node(prov_did);
+                eval_graph.add_or_update_edge(0, prov_node_id, user_level, prov.payload.iat);
+
+                // Check creator
+                if let Some(cert_lvl) = prov.certified_level(canonical_creator) {
+                    eval_graph.add_or_update_edge(
+                        prov_node_id,
+                        creator_node_id,
+                        cert_lvl,
+                        prov.payload.iat,
+                    );
+                }
+
+                // Check guarantors
+                for g_did in &dedup_guarantors {
+                    if let Some(cert_lvl) = prov.certified_level(g_did) {
+                        let g_node_id = eval_graph.get_or_create_node(g_did);
+                        eval_graph.add_or_update_edge(
+                            prov_node_id,
+                            g_node_id,
+                            cert_lvl,
+                            prov.payload.iat,
+                        );
+                    }
+                }
+            }
+        }
 
     // Precalculate base edge probabilities and cache edge attributes before temporary bridges
     let mut edge_prob_map: HashMap<EdgeKey, f64> = HashMap::new();
@@ -339,8 +413,13 @@ fn evaluate_trust_internal(
                 base_factor
             } else if let (Some(hl), Some(now)) = (policy.freshness_half_life_secs, now_secs) {
                 if hl > 0 {
-                    let dt = now.saturating_sub(edge.list_iat) as f64;
-                    base_factor * 2.0_f64.powf(-dt / (hl as f64))
+                    let dt = now.saturating_sub(edge.list_iat);
+                    if dt > policy.freshness_grace_secs {
+                        let excess = (dt - policy.freshness_grace_secs) as f64;
+                        base_factor * 2.0_f64.powf(-excess / (hl as f64))
+                    } else {
+                        base_factor
+                    }
                 } else {
                     base_factor
                 }

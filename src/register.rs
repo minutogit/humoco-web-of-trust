@@ -5,8 +5,15 @@ use serde::{Deserialize, Serialize};
 use crate::error::WotError;
 use crate::graph::EgoGraphCache;
 use crate::identity::{canonicalize_did, Did, WotSigner};
-use crate::scorer::{evaluate_trust, evaluate_trust_from_observer, TrustEvaluation};
+use crate::provider_filter::{parse_and_verify_provider_filter, StoredProviderFilter};
+use crate::scorer::{
+    evaluate_trust_from_observer, evaluate_trust_with_providers, TrustEvaluation,
+};
 use crate::sd_jwt::{create_and_sign_sd_jwt, StoredSdJwt};
+
+fn default_freshness_grace_secs() -> u64 {
+    31_536_000
+}
 
 /// Local Web of Trust configuration policy.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,17 +31,21 @@ pub struct WotPolicy {
     pub guarantor_weight: f64,
     /// Optional freshness half-life in seconds for list decay.
     pub freshness_half_life_secs: Option<u64>,
+    /// Freshness grace period in seconds before decay starts (default: 31_536_000 = 1 year).
+    #[serde(default = "default_freshness_grace_secs")]
+    pub freshness_grace_secs: u64,
 }
 
 impl Default for WotPolicy {
     fn default() -> Self {
         Self {
             unreciprocated_hops: 1,
-            own_list_max_hops: 4,
+            own_list_max_hops: 3,
             max_import_depth: 5,
-            max_eval_depth: 4,
+            max_eval_depth: 5,
             guarantor_weight: 0.85,
-            freshness_half_life_secs: None,
+            freshness_half_life_secs: Some(31_536_000),
+            freshness_grace_secs: 31_536_000,
         }
     }
 }
@@ -78,6 +89,9 @@ pub struct TrustRegister {
     pub sent_log: BTreeMap<Did, BTreeMap<Did, SentRecord>>,
     /// Local evaluation and synchronisation policy.
     pub policy: WotPolicy,
+    /// Verified provider filter documents providing certified member seals.
+    #[serde(default)]
+    pub provider_filters: BTreeMap<Did, StoredProviderFilter>,
     /// Ephemeral runtime graph cache for fast reachability and scoring.
     #[serde(skip)]
     pub(crate) graph_cache: RefCell<Option<EgoGraphCache>>,
@@ -95,6 +109,7 @@ impl TrustRegister {
             raw_list_store: BTreeMap::new(),
             sent_log: BTreeMap::new(),
             policy,
+            provider_filters: BTreeMap::new(),
             graph_cache: RefCell::new(None),
         })
     }
@@ -201,6 +216,29 @@ impl TrustRegister {
         Ok(removed)
     }
 
+    /// Sets the user's global maximum hop forwarding policy and propagates it to all active direct contacts.
+    pub fn set_own_list_max_hops(&mut self, max_hops: u8, now_secs: u64) -> Result<(), WotError> {
+        if !(1..=8).contains(&max_hops) {
+            return Err(WotError::InvalidHopLimit(max_hops));
+        }
+
+        self.policy.own_list_max_hops = max_hops;
+        // Do NOT shrink max_eval_depth or max_import_depth
+        self.policy.max_eval_depth = self.policy.max_eval_depth.max(max_hops.saturating_add(1));
+        self.policy.max_import_depth = self.policy.max_import_depth.max(max_hops.saturating_add(1));
+
+        for entry in self.own_contacts.values_mut() {
+            if entry.level >= 1 {
+                entry.desired_hops = max_hops;
+                entry.updated_at = now_secs;
+            }
+        }
+
+        self.own_list_dirty = true;
+        self.invalidate_graph_cache();
+        Ok(())
+    }
+
     /// Signs the user's current trust list and returns the full SD-JWT wire string.
     pub fn sign_own_list<S: WotSigner>(&mut self, signer: &S, now_secs: u64) -> Result<String, WotError> {
         let signer_did = canonicalize_did(signer.did())?;
@@ -285,6 +323,60 @@ impl TrustRegister {
         pruned
     }
 
+    /// Imports and verifies a third-party provider filter seal document.
+    pub fn import_provider_filter(&mut self, raw_json: &str, now_secs: u64) -> Result<Did, WotError> {
+        let mut parsed = parse_and_verify_provider_filter(raw_json, now_secs)?;
+        let iss = parsed.payload.iss.clone();
+
+        let local_trust_level = if let Some(existing) = self.provider_filters.get(&iss) {
+            if parsed.payload.v < existing.payload.v {
+                return Err(WotError::LimitExceeded(format!(
+                    "Rollback rejected for provider filter {}: incoming v={} < existing v={}",
+                    iss, parsed.payload.v, existing.payload.v
+                )));
+            }
+            if parsed.payload.v == existing.payload.v && parsed.raw_json != existing.raw_json {
+                return Err(WotError::EquivocationDetected {
+                    issuer: iss.clone(),
+                    version: parsed.payload.v,
+                });
+            }
+            existing.local_trust_level
+        } else {
+            self.own_contacts.get(&iss).map(|e| e.level).unwrap_or(0)
+        };
+
+        parsed.local_trust_level = local_trust_level;
+        self.provider_filters.insert(iss.clone(), parsed);
+        self.invalidate_graph_cache();
+        Ok(iss)
+    }
+
+    /// Sets the local user trust level (0..=3) for an imported provider filter.
+    pub fn set_provider_trust(&mut self, issuer_did: &str, level: u8) -> Result<(), WotError> {
+        if level > 3 {
+            return Err(WotError::InvalidTrustLevel(level));
+        }
+        let canonical = canonicalize_did(issuer_did)?;
+        if let Some(prov) = self.provider_filters.get_mut(&canonical) {
+            prov.local_trust_level = level;
+            self.invalidate_graph_cache();
+            Ok(())
+        } else {
+            Err(WotError::InvalidDid(format!("Provider filter {} not found", canonical)))
+        }
+    }
+
+    /// Removes an imported provider filter.
+    pub fn remove_provider_filter(&mut self, issuer_did: &str) -> Result<bool, WotError> {
+        let canonical = canonicalize_did(issuer_did)?;
+        let removed = self.provider_filters.remove(&canonical).is_some();
+        if removed {
+            self.invalidate_graph_cache();
+        }
+        Ok(removed)
+    }
+
     /// Evaluates network trust towards a single target DID.
     pub fn evaluate_did(
         &self,
@@ -303,9 +395,10 @@ impl TrustRegister {
         now_secs: Option<u64>,
     ) -> Result<TrustEvaluation, WotError> {
         let graph = self.get_or_build_graph_cache();
-        evaluate_trust(
+        evaluate_trust_with_providers(
             &graph,
             &self.policy,
+            Some(&self.provider_filters),
             creator_id,
             guarantor_ids,
             is_known_offender,

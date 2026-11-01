@@ -12,6 +12,7 @@
 pub mod error;
 pub mod graph;
 pub mod identity;
+pub mod provider_filter;
 pub mod register;
 pub mod scorer;
 pub mod sd_jwt;
@@ -23,10 +24,15 @@ pub use identity::{
     canonicalize_did, did_from_verifying_key, extract_verifying_key, Did, Digest128,
     Ed25519WotSigner, WotSigner,
 };
+pub use provider_filter::{
+    create_and_sign_provider_filter, hash_member_did, mix64, parse_and_verify_provider_filter,
+    BinaryFuse64, EncodedBinaryFuse64, ProviderFilterPayload, SignedProviderFilter,
+    StoredProviderFilter, MAX_PROVIDER_FILTER_RAW_LEN, PROVIDER_FILTER_TYP,
+};
 pub use register::{OwnTrustEntry, SentRecord, TrustRegister, WotPolicy};
 pub use scorer::{
-    evaluate_trust, evaluate_trust_from_observer, exact_path_union_prob, TrustEvaluation,
-    TrustPath, MAX_CANDIDATE_PATHS, MIN_PATH_PROBABILITY,
+    evaluate_trust, evaluate_trust_from_observer, evaluate_trust_with_providers,
+    exact_path_union_prob, TrustEvaluation, TrustPath, MAX_CANDIDATE_PATHS, MIN_PATH_PROBABILITY,
 };
 pub use sd_jwt::{
     compute_digest128, create_and_sign_sd_jwt, encode_disclosure, parse_and_verify_sd_jwt,

@@ -214,30 +214,27 @@ impl TrustRegister {
         // Sort candidates ascending by (dist, issuer)
         candidates.sort_by(|a, b| a.dist.cmp(&b.dist).then_with(|| a.issuer.cmp(&b.issuer)));
 
-        // Assemble package respecting max_bytes
+        // Assemble package respecting max_bytes with O(N) byte tracking
         let mut included_lists = Vec::new();
         let mut receipt_entries = Vec::new();
+        // Base framing: {"format_version":1,"lists":[]} is 31 bytes
+        let mut current_bytes = 31usize;
 
         for cand in candidates {
-            let mut test_lists = included_lists.clone();
-            test_lists.push(cand.wire_string.clone());
-
-            let test_pkg = WotSyncPackage {
-                format_version: 1,
-                lists: test_lists,
+            let added_bytes = if included_lists.is_empty() {
+                cand.wire_string.len() + 2
+            } else {
+                cand.wire_string.len() + 3
             };
 
-            if let Some(limit) = max_bytes {
-                let encoded_len = match serde_json::to_vec(&test_pkg) {
-                    Ok(bytes) => bytes.len(),
-                    Err(_) => continue,
-                };
-                if encoded_len > limit {
-                    // Stop assembling package if size limit is reached
-                    break;
-                }
+            if let Some(limit) = max_bytes
+                && current_bytes.saturating_add(added_bytes) > limit
+            {
+                // Skip this candidate and continue trying subsequent smaller candidates
+                continue;
             }
 
+            current_bytes = current_bytes.saturating_add(added_bytes);
             included_lists.push(cand.wire_string);
             receipt_entries.push(SyncReceiptEntry {
                 issuer_did: cand.issuer,
