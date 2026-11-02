@@ -42,11 +42,8 @@ pub struct DisclosureRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredSdJwt {
     pub jws_compact: String,
-    #[serde(alias = "version")]
     pub v: u64,
-    #[serde(alias = "issued_at")]
     pub iat: u64,
-    #[serde(alias = "global_max_hops")]
     pub max_hops: u8,
     pub disclosures: BTreeMap<Digest128, DisclosureRecord>,
 }

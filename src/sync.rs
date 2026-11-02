@@ -11,7 +11,6 @@ use crate::sd_jwt::parse_and_verify_sd_jwt;
 /// Format of a synchronization gossip package containing SD-JWT trust lists.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WotSyncPackage {
-    #[serde(alias = "version")]
     pub format_version: u8,
     pub lists: Vec<String>,
 }
@@ -35,21 +34,16 @@ pub struct SyncReceipt {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportStats {
     /// Newly imported lists that were not present in raw_list_store.
-    #[serde(alias = "accepted_new")]
     pub imported: usize,
     /// Existing lists updated to a strictly newer version.
     pub updated: usize,
     /// Newly merged disclosures for an existing list version.
-    #[serde(alias = "merged_disclosures")]
     pub merged: usize,
     /// Lists skipped because version is already stored and unchanged or older.
-    #[serde(alias = "skipped_stale_or_unchanged")]
     pub skipped_unchanged: usize,
     /// Lists rejected by topological spam filter (unreachable).
-    #[serde(alias = "rejected_unreachable")]
     pub rejected_spam: usize,
     /// Lists rejected due to signature or crypto validation failure.
-    #[serde(alias = "rejected_invalid")]
     pub rejected_crypto: usize,
     /// Lists rejected due to timestamps too far in future.
     pub rejected_timestamp: usize,
@@ -58,34 +52,9 @@ pub struct ImportStats {
 }
 
 impl ImportStats {
-    /// Backward-compatible alias for newly imported lists.
-    pub fn accepted_new(&self) -> usize {
-        self.imported
-    }
-
     /// Total count of accepted lists (both new and updated).
     pub fn accepted_total(&self) -> usize {
         self.imported + self.updated
-    }
-
-    /// Backward-compatible alias for merged disclosures.
-    pub fn merged_disclosures(&self) -> usize {
-        self.merged
-    }
-
-    /// Backward-compatible alias for skipped lists.
-    pub fn skipped_stale_or_unchanged(&self) -> usize {
-        self.skipped_unchanged
-    }
-
-    /// Backward-compatible alias for rejected unreachable spam.
-    pub fn rejected_unreachable(&self) -> usize {
-        self.rejected_spam
-    }
-
-    /// Backward-compatible alias for rejected invalid lists (crypto + timestamp).
-    pub fn rejected_invalid(&self) -> usize {
-        self.rejected_crypto + self.rejected_timestamp
     }
 }
 
