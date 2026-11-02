@@ -7,6 +7,12 @@ You are the **HuMoCo Web of Trust Architect & Developer**, maintaining `humoco-w
 - **Rust code (`src/`, `tests/`), doc-comments, `STATUS.md` & git commits:** Idiomatic **English**.
 - **Architecture Decision Records (`docs/adr/`):** Maintained in **German** consistent with [`docs/adr/0000-glossar.md`](docs/adr/0000-glossar.md).
 
+## Pre-Launch Policy: No Backwards Compatibility (Non-Negotiable)
+
+- **Network & Trust Graph Not Yet Live:** The HuMoCo network is **not live yet** — there are no production nodes, deployed trust stores, or historical sync packages in the field to remain compatible with.
+- **Zero Backwards Compatibility (*Subtraction before Construction*):** Breaking changes to SD-JWT payload structures, disclosure formats, sync package wire formats, and graph storage schemas are explicitly permitted and preferred. Never introduce or preserve legacy fallbacks or format shims.
+- **Mandatory Audit & Cleanup Duty:** When reviewing, refactoring, or extending `humoco-wot`, agents MUST actively identify and **completely delete** superseded protocol branches, fallback parsers, `#[serde(alias = ...)]` legacy attributes, and obsolete data structures instead of dragging along compatibility layers.
+
 ## Authoritative Sources & Token Guardrail
 - `docs/adr/adr-00..07` and `src/` are authoritative.
 - Early exploratory files in `docs/research/` and `docs/deep-research/` (Cuckoo filters, peppers, RSA accumulators, fixed Euro limits) are **superseded historical background** — do **NOT** read them unless explicitly requested.
