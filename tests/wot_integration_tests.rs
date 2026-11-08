@@ -1513,3 +1513,383 @@ fn test_19_provider_filter_integration_and_voucher_evaluation() {
     assert!(removed);
     assert!(!reg.provider_filters.contains_key(&did_prov));
 }
+
+#[test]
+fn test_20_drop_subpackages_selective_disclosure_and_signature_integrity() {
+    let (signer_alice, did_alice) = create_identity();
+    let (_signer_bob, did_bob) = create_identity();
+    let (signer_carol, did_carol) = create_identity();
+    let (_signer_dave, did_dave) = create_identity();
+    let (_signer_eve, did_eve) = create_identity();
+
+    let now_secs = 1_700_000_000;
+    let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+
+    // Alice sets trust for Bob: level 2, desired_hops 1
+    reg_alice.set_contact_trust(&did_bob, 2, 1, now_secs).unwrap();
+    // Alice sets trust for Carol: level 2, desired_hops 3
+    reg_alice.set_contact_trust(&did_carol, 2, 3, now_secs).unwrap();
+
+    // Carol provides a forwardable list with max_hops = 3 to satisfy Tit-for-Tat
+    let (carol_wire, _) = create_and_sign_sd_jwt(
+        &signer_carol,
+        now_secs,
+        now_secs,
+        3,
+        &[(did_alice.clone(), 2, 3)],
+    )
+    .unwrap();
+    let pkg_from_carol = WotSyncPackage {
+        format_version: 1,
+        lists: vec![carol_wire],
+    };
+    reg_alice
+        .import_sync_package(&pkg_from_carol, Some(&did_carol), now_secs)
+        .unwrap();
+
+    // Alice signs her own list
+    reg_alice.sign_own_list(&signer_alice, now_secs).unwrap();
+
+    // Prepare drop subpackages for 3 distance classes via custom_readers:
+    // Bob (c=1), Dave (c=2), Eve (c=3)
+    let prep = reg_alice
+        .prepare_drop_sync_subpackages(
+            "https://drop.humoco.org/slot_alice",
+            Some(&[(&did_bob, 1), (&did_dave, 2), (&did_eve, 3)]),
+            None,
+            false,
+        )
+        .unwrap();
+
+    assert!(prep.is_some(), "Preparation must return subpackages");
+    let (subpackages, receipt) = prep.unwrap();
+
+    assert_eq!(subpackages.len(), 3);
+    assert_eq!(receipt.classes.len(), 3);
+    assert_eq!(receipt.transport_id, "https://drop.humoco.org/slot_alice");
+    assert_ne!(receipt.readers_fingerprint, 0);
+
+    // Class 1 (c=1): Bob
+    let sub_c1 = &subpackages[0];
+    assert_eq!(sub_c1.distance_class, 1);
+    assert_eq!(sub_c1.reader_dids, vec![did_bob.clone()]);
+    assert_eq!(sub_c1.package.lists.len(), 2); // Alice's own list + Carol's list
+    let alice_list_c1 = &sub_c1.package.lists[0];
+
+    let alice_stored = reg_alice.own_signed_list.as_ref().unwrap();
+    let bob_disc = alice_stored
+        .disclosures
+        .values()
+        .find(|d| d.target_did == did_bob)
+        .expect("Bob disclosure must exist in own list");
+    let carol_disc = alice_stored
+        .disclosures
+        .values()
+        .find(|d| d.target_did == did_carol)
+        .expect("Carol disclosure must exist in own list");
+
+    // In class 1, both Bob (contact_max_hops=1) and Carol (contact_max_hops=3) are disclosed
+    assert!(alice_list_c1.contains(&bob_disc.raw_b64));
+    assert!(alice_list_c1.contains(&carol_disc.raw_b64));
+    let (_, parsed_c1) = parse_and_verify_sd_jwt(alice_list_c1, now_secs).unwrap();
+    assert!(parsed_c1.disclosures.values().any(|d| d.target_did == did_bob));
+    assert!(parsed_c1.disclosures.values().any(|d| d.target_did == did_carol));
+
+    // Class 2 (c=2): Dave
+    let sub_c2 = &subpackages[1];
+    assert_eq!(sub_c2.distance_class, 2);
+    assert_eq!(sub_c2.reader_dids, vec![did_dave.clone()]);
+    let alice_list_c2 = &sub_c2.package.lists[0];
+    // In class 2: Bob (contact_max_hops=1 < 2) is cryptographically stripped!
+    // Carol (contact_max_hops=3 >= 2) remains disclosed.
+    assert!(
+        !alice_list_c2.contains(&bob_disc.raw_b64),
+        "Bob disclosure must be stripped at distance 2"
+    );
+    assert!(
+        alice_list_c2.contains(&carol_disc.raw_b64),
+        "Carol disclosure must remain at distance 2"
+    );
+    let (_, parsed_c2) = parse_and_verify_sd_jwt(alice_list_c2, now_secs).unwrap();
+    assert!(!parsed_c2.disclosures.values().any(|d| d.target_did == did_bob));
+    assert!(parsed_c2.disclosures.values().any(|d| d.target_did == did_carol));
+
+    // Class 3 (c=3): Eve
+    let sub_c3 = &subpackages[2];
+    assert_eq!(sub_c3.distance_class, 3);
+    assert_eq!(sub_c3.reader_dids, vec![did_eve.clone()]);
+    let alice_list_c3 = &sub_c3.package.lists[0];
+    assert!(
+        !alice_list_c3.contains(&bob_disc.raw_b64),
+        "Bob must be stripped at distance 3"
+    );
+    assert!(
+        alice_list_c3.contains(&carol_disc.raw_b64),
+        "Carol must remain disclosed at distance 3"
+    );
+    let (_, parsed_c3) = parse_and_verify_sd_jwt(alice_list_c3, now_secs).unwrap();
+    assert!(!parsed_c3.disclosures.values().any(|d| d.target_did == did_bob));
+    assert!(parsed_c3.disclosures.values().any(|d| d.target_did == did_carol));
+
+    // Cryptographic signature integrity: Verify that both Class 1 and Class 2 packages
+    // are accepted by import_sync_package with zero crypto rejection!
+    let mut reg_bob = TrustRegister::new(&did_bob, WotPolicy::default()).unwrap();
+    let stats_bob = reg_bob
+        .import_sync_package(&sub_c1.package, Some(&did_alice), now_secs)
+        .unwrap();
+    assert_eq!(stats_bob.rejected_crypto, 0);
+    assert!(stats_bob.accepted_total() >= 1);
+
+    let mut reg_dave = TrustRegister::new(&did_dave, WotPolicy::default()).unwrap();
+    let stats_dave = reg_dave
+        .import_sync_package(&sub_c2.package, Some(&did_alice), now_secs)
+        .unwrap();
+    assert_eq!(stats_dave.rejected_crypto, 0);
+    assert!(stats_dave.accepted_total() >= 1);
+
+    let mut reg_eve = TrustRegister::new(&did_eve, WotPolicy::default()).unwrap();
+    let stats_eve = reg_eve
+        .import_sync_package(&sub_c3.package, Some(&did_alice), now_secs)
+        .unwrap();
+    assert_eq!(stats_eve.rejected_crypto, 0);
+    assert!(stats_eve.accepted_total() >= 1);
+}
+
+#[test]
+fn test_21_drop_sent_log_transport_binding_idempotency_and_delta() {
+    let (signer_alice, did_alice) = create_identity();
+    let (_signer_bob, did_bob) = create_identity();
+    let (_signer_carol, did_carol) = create_identity();
+
+    let now_secs = 1_700_000_000;
+    let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+    reg_alice.set_contact_trust(&did_bob, 2, 2, now_secs).unwrap();
+    reg_alice.sign_own_list(&signer_alice, now_secs).unwrap();
+
+    let transport_id = "https://drop.humoco.org/alice/wot.bin";
+
+    // 1. Initial preparation
+    let prep1 = reg_alice
+        .prepare_drop_sync_subpackages(transport_id, None, None, false)
+        .unwrap();
+    assert!(prep1.is_some());
+    let (subpkgs, receipt) = prep1.unwrap();
+    assert_eq!(subpkgs.len(), 1); // Bob is in distance class 1
+
+    // 2. Commit receipt to drop_sent_log
+    reg_alice.commit_drop_sync_receipt(receipt.clone(), now_secs);
+    assert!(reg_alice.drop_sent_log.contains_key(transport_id));
+    assert_eq!(
+        reg_alice.drop_sent_log.get(transport_id).unwrap().readers_fingerprint,
+        receipt.readers_fingerprint
+    );
+
+    // 3. Second call with unchanged trust state and unchanged reader list: Ok(None)!
+    let prep2 = reg_alice
+        .prepare_drop_sync_subpackages(transport_id, None, None, false)
+        .unwrap();
+    assert!(prep2.is_none(), "Unchanged drop state must return Ok(None)");
+
+    // 4. Force full re-preparation
+    let prep_force = reg_alice
+        .prepare_drop_sync_subpackages(transport_id, None, None, true)
+        .unwrap();
+    assert!(prep_force.is_some(), "force_full=true must bypass drop_sent_log delta check");
+
+    // 5. Different transport ID: not committed yet
+    let prep_other_transport = reg_alice
+        .prepare_drop_sync_subpackages("https://other-drop.com/alice/wot.bin", None, None, false)
+        .unwrap();
+    assert!(prep_other_transport.is_some(), "Uncommitted transport ID must return Some");
+
+    // 6. Changing reader list triggers Ok(Some)
+    let prep_custom = reg_alice
+        .prepare_drop_sync_subpackages(
+            transport_id,
+            Some(&[(&did_bob, 1), (&did_carol, 2)]),
+            None,
+            false,
+        )
+        .unwrap();
+    assert!(prep_custom.is_some(), "Altered readers fingerprint must trigger Ok(Some)");
+
+    // 7. Changing own list version triggers Ok(Some)
+    reg_alice.set_contact_trust(&did_carol, 1, 2, now_secs + 10).unwrap();
+    reg_alice.sign_own_list(&signer_alice, now_secs + 10).unwrap();
+    let prep_version_bump = reg_alice
+        .prepare_drop_sync_subpackages(transport_id, None, None, false)
+        .unwrap();
+    assert!(prep_version_bump.is_some(), "Updated trust list version must trigger Ok(Some)");
+
+    // 8. Test clear_drop_sent_log
+    let receipt_new = prep_version_bump.unwrap().1;
+    reg_alice.commit_drop_sync_receipt(receipt_new, now_secs + 10);
+    assert!(reg_alice.drop_sent_log.contains_key(transport_id));
+
+    // Clear single transport
+    reg_alice.clear_drop_sent_log(Some(transport_id));
+    assert!(!reg_alice.drop_sent_log.contains_key(transport_id));
+    let prep_after_clear = reg_alice
+        .prepare_drop_sync_subpackages(transport_id, None, None, false)
+        .unwrap();
+    assert!(prep_after_clear.is_some(), "Must re-prepare after clearing transport sent log");
+
+    // Clear all
+    reg_alice.commit_drop_sync_receipt(prep_after_clear.unwrap().1, now_secs + 20);
+    reg_alice.clear_drop_sent_log(None);
+    assert!(reg_alice.drop_sent_log.is_empty());
+}
+
+#[test]
+fn test_22_drop_sync_isolation_from_1_to_1_sent_log() {
+    let (signer_alice, did_alice) = create_identity();
+    let (_signer_bob, did_bob) = create_identity();
+
+    let now_secs = 1_700_000_000;
+    let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+    reg_alice.set_contact_trust(&did_bob, 2, 2, now_secs).unwrap();
+    reg_alice.sign_own_list(&signer_alice, now_secs).unwrap();
+
+    // Prepare and commit drop sync receipt
+    let (subpkgs, drop_receipt) = reg_alice
+        .prepare_drop_sync_subpackages("https://drop.example.org/alice.wot", None, None, false)
+        .unwrap()
+        .unwrap();
+    assert!(!subpkgs.is_empty());
+    reg_alice.commit_drop_sync_receipt(drop_receipt, now_secs);
+
+    // Invariant: 1:1 sent_log must remain 100% untouched!
+    assert!(
+        !reg_alice.sent_log.contains_key(&did_bob),
+        "Drop commit must NOT populate 1:1 sent_log"
+    );
+
+    // Preparing 1:1 sync package for Bob for an offline payment MUST include Alice's list!
+    let (pkg_1to1, receipt_1to1) = reg_alice
+        .prepare_sync_package(Some(&did_bob), None, false)
+        .unwrap();
+    assert_eq!(
+        pkg_1to1.lists.len(),
+        1,
+        "1:1 sync package must include Alice's list regardless of drop uploads"
+    );
+
+    // Commit 1:1 receipt
+    reg_alice.commit_sync_receipt(receipt_1to1, now_secs);
+    assert!(reg_alice.sent_log.contains_key(&did_bob));
+
+    // Subsequent 1:1 sync is now empty (delta-checked)
+    let (pkg_1to1_empty, _) = reg_alice
+        .prepare_sync_package(Some(&did_bob), None, false)
+        .unwrap();
+    assert!(pkg_1to1_empty.lists.is_empty());
+
+    // Drop sent log is still intact and unaffected by 1:1 sync commit
+    assert!(reg_alice.drop_sent_log.contains_key("https://drop.example.org/alice.wot"));
+}
+
+#[test]
+fn test_23_authorized_drop_readers_multi_hop_and_level_zero_exclusion() {
+    let (_signer_alice, did_alice) = create_identity();
+    let (signer_bob, did_bob) = create_identity();
+    let (signer_carol, did_carol) = create_identity();
+    let (_signer_dave, did_dave) = create_identity();
+    let (_signer_charlie, did_charlie) = create_identity();
+
+    let now_secs = 1_700_000_000;
+    let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+
+    // Alice adds Bob at Level 2 (30%/60%) -> Hop 1
+    reg_alice.set_contact_trust(&did_bob, 2, 3, now_secs).unwrap();
+    // Alice adds Charlie at Level 0 (F2F existence only)
+    reg_alice.set_contact_trust(&did_charlie, 0, 1, now_secs).unwrap();
+
+    // 1. Check authorized readers with only direct contacts
+    let readers_1 = reg_alice.authorized_drop_readers();
+    assert_eq!(readers_1, vec![(did_bob.clone(), 1)]);
+    // Charlie (level 0) is strictly excluded!
+    assert!(!readers_1.iter().any(|(d, _)| d == &did_charlie));
+
+    // 2. Multi-hop reachability: Bob lists Carol at Level 2, max_hops 3
+    let (bob_wire, _) = create_and_sign_sd_jwt(
+        &signer_bob,
+        now_secs,
+        now_secs,
+        3,
+        &[(did_carol.clone(), 2, 3)],
+    )
+    .unwrap();
+    let pkg_bob = WotSyncPackage {
+        format_version: 1,
+        lists: vec![bob_wire],
+    };
+    reg_alice
+        .import_sync_package(&pkg_bob, Some(&did_bob), now_secs)
+        .unwrap();
+
+    // Carol is now reachable at shortest distance 2!
+    let readers_2 = reg_alice.authorized_drop_readers();
+    assert_eq!(
+        readers_2,
+        vec![(did_bob.clone(), 1), (did_carol.clone(), 2)]
+    );
+    assert!(!readers_2.iter().any(|(d, _)| d == &did_charlie));
+
+    // 3. Hop 3 reachability: Carol lists Dave at Level 2, max_hops 3
+    let (carol_wire, _) = create_and_sign_sd_jwt(
+        &signer_carol,
+        now_secs,
+        now_secs,
+        3,
+        &[(did_dave.clone(), 2, 3)],
+    )
+    .unwrap();
+    let pkg_carol = WotSyncPackage {
+        format_version: 1,
+        lists: vec![carol_wire],
+    };
+    reg_alice
+        .import_sync_package(&pkg_carol, Some(&did_carol), now_secs)
+        .unwrap();
+
+    // Dave is now reachable at shortest distance 3!
+    let readers_3 = reg_alice.authorized_drop_readers();
+    assert_eq!(
+        readers_3,
+        vec![
+            (did_bob.clone(), 1),
+            (did_carol.clone(), 2),
+            (did_dave.clone(), 3)
+        ]
+    );
+
+    // 4. Policy cap: set max_hops to 2 -> Dave (distance 3) is excluded!
+    reg_alice.set_own_list_max_hops(2, now_secs).unwrap();
+    let readers_capped = reg_alice.authorized_drop_readers();
+    assert_eq!(
+        readers_capped,
+        vec![(did_bob.clone(), 1), (did_carol.clone(), 2)]
+    );
+
+    // 5. Explicit Level-0 veto: if Alice adds Dave directly as Level 0,
+    // Dave MUST be excluded even if reachable via third-party lists!
+    reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
+    reg_alice.set_contact_trust(&did_dave, 0, 1, now_secs).unwrap();
+    let readers_with_veto = reg_alice.authorized_drop_readers();
+    assert!(
+        !readers_with_veto.iter().any(|(d, _)| d == &did_dave),
+        "Direct Level-0 contact must be excluded from authorized drop readers"
+    );
+
+    // 6. Test deterministic readers fingerprint calculation
+    let fp1 = humoco_wot::sync::compute_readers_fingerprint(&readers_capped);
+    // Reverse order input to compute_readers_fingerprint
+    let mut reversed = readers_capped.clone();
+    reversed.reverse();
+    let fp2 = humoco_wot::sync::compute_readers_fingerprint(&reversed);
+    assert_eq!(fp1, fp2, "Fingerprint must be order-invariant (sorted internally)");
+    assert_ne!(fp1, 0);
+
+    // Empty reader list fingerprint is 0
+    assert_eq!(humoco_wot::sync::compute_readers_fingerprint(&[]), 0);
+}

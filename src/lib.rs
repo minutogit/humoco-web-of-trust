@@ -41,5 +41,6 @@ pub use sd_jwt::{
     SD_JWT_TYP,
 };
 pub use sync::{
-    peek_unverified_issuer, ImportStats, SyncReceipt, SyncReceiptEntry, WotSyncPackage,
+    compute_readers_fingerprint, peek_unverified_issuer, DropClassReceipt, DropClassSubpackage,
+    DropSentRecord, DropSyncReceipt, ImportStats, SyncReceipt, SyncReceiptEntry, WotSyncPackage,
 };

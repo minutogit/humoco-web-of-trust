@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::WotError;
 use crate::identity::{canonicalize_did, Did};
@@ -9,14 +10,14 @@ use crate::register::TrustRegister;
 use crate::sd_jwt::parse_and_verify_sd_jwt;
 
 /// Format of a synchronization gossip package containing SD-JWT trust lists.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WotSyncPackage {
     pub format_version: u8,
     pub lists: Vec<String>,
 }
 
 /// An entry in a synchronization receipt confirming prepared transmission of a list.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncReceiptEntry {
     pub issuer_did: Did,
     pub version: u64,
@@ -24,10 +25,45 @@ pub struct SyncReceiptEntry {
 }
 
 /// Receipt returned by `prepare_sync_package` to be committed to `sent_log` after send.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncReceipt {
     pub recipient_did: Option<Did>,
     pub entries: Vec<SyncReceiptEntry>,
+}
+
+/// A prepared subpackage tailored for a specific reader distance class before encryption (ADR-05).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DropClassSubpackage {
+    /// Reader distance class in 1..=3 (1 = direct level>=1 contacts, 2 = hop-2, 3 = hop-3).
+    pub distance_class: u8,
+    /// Canonical DIDs of readers belonging to this distance class.
+    pub reader_dids: Vec<Did>,
+    /// Redacted WoT sync package specifically tailored for `distance_class` BEFORE encryption (ADR-05).
+    pub package: WotSyncPackage,
+}
+
+/// Receipt confirming prepared transmission of a distance class subpackage.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DropClassReceipt {
+    pub distance_class: u8,
+    pub readers_fingerprint: u64,
+    pub entries: Vec<SyncReceiptEntry>,
+}
+
+/// Receipt returned by `prepare_drop_sync_subpackages` to be committed to `drop_sent_log`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DropSyncReceipt {
+    pub transport_id: String,
+    pub readers_fingerprint: u64,
+    pub classes: Vec<DropClassReceipt>,
+}
+
+/// Transport-bound record of a drop sync upload committed to `drop_sent_log`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DropSentRecord {
+    pub readers_fingerprint: u64,
+    pub classes: Vec<DropClassReceipt>,
+    pub committed_at: u64,
 }
 
 /// Statistics detailing the outcome of importing a synchronization package.
@@ -66,6 +102,24 @@ pub fn peek_unverified_issuer(raw_sd_jwt: &str) -> Option<Did> {
     let val: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     let iss = val.get("iss")?.as_str()?;
     canonicalize_did(iss).ok()
+}
+
+/// Computes a deterministic 64-bit truncated SHA-256 fingerprint over sorted (canonical_did, distance_class) pairs.
+pub fn compute_readers_fingerprint(classified_readers: &[(Did, u8)]) -> u64 {
+    if classified_readers.is_empty() {
+        return 0;
+    }
+    let mut sorted: Vec<(&Did, u8)> = classified_readers.iter().map(|(d, c)| (d, *c)).collect();
+    sorted.sort();
+    let mut hasher = Sha256::new();
+    for (did, class) in sorted {
+        hasher.update(did.as_bytes());
+        hasher.update(b":");
+        hasher.update([class]);
+        hasher.update(b"\n");
+    }
+    let hash = hasher.finalize();
+    u64::from_be_bytes(hash[0..8].try_into().expect("Slice of 8 bytes"))
 }
 
 impl TrustRegister {
@@ -239,6 +293,255 @@ impl TrustRegister {
                     },
                 );
             }
+        }
+    }
+
+    /// Computes the local user's authorized `wot` readers according to `policy.own_list_max_hops`
+    /// (capped at `1..=3`) and trust level >= 1.
+    ///
+    /// - Direct contacts in `own_contacts` with `entry.level >= 1` have distance class `1`.
+    /// - If `max_hops >= 2`, reachable graph nodes (over `level >= 1` edges via `shortest_distances_from_self()`)
+    ///   at shortest distance `d` where `2 <= d <= max_hops.min(3)` get distance class `d` (`2` or `3`),
+    ///   excluding `self_did`.
+    /// - Direct contacts with `level == 0` are strictly excluded from reading WoT lists.
+    /// - Sorted deterministically by `(distance_class, did)`.
+    pub fn authorized_drop_readers(&self) -> Vec<(Did, u8)> {
+        let max_hops = self.policy.own_list_max_hops.clamp(1, 3);
+        let graph = self.get_or_build_graph_cache();
+        let distances = graph.shortest_distances_from_self();
+
+        let mut readers = Vec::new();
+        for (did, &id) in &graph.did_to_id {
+            if did == &self.self_did {
+                continue;
+            }
+            if self.own_contacts.get(did).is_some_and(|e| e.level == 0) {
+                continue;
+            }
+            if let Some(&dist) = distances.get(&id)
+                && dist >= 1 && dist <= max_hops
+            {
+                readers.push((did.clone(), dist));
+            }
+        }
+        readers.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        readers
+    }
+
+    /// Prepares transport-bound distance-class subpackages for multi-recipient drop slots.
+    ///
+    /// - Uses `custom_readers` (canonicalizing DIDs, filtering `distance_class` in `1..=3`,
+    ///   deduplicating keeping minimum distance class per DID) if `Some`, otherwise `self.authorized_drop_readers()`.
+    /// - Groups readers into at most 3 classes (`c = 1`, `c = 2`, `c = 3` — omitting empty classes).
+    /// - For each non-empty class `c`:
+    ///   - Builds redacted `WotSyncPackage` + `Vec<SyncReceiptEntry>` before encryption (ADR-05):
+    ///     - Own signed list (`dist = 0`): `target_dist = c`. Included if `own_list.max_hops >= target_dist`
+    ///       and `to_redacted_wire_string(target_dist)` is `Some`.
+    ///     - Reachable third-party lists (`dist >= 1` in `shortest_distances_from_self()`):
+    ///       `target_dist = dist.saturating_add(c)`. Included if `stored.max_hops >= target_dist`
+    ///       and `to_redacted_wire_string(target_dist)` is `Some`.
+    ///     - Sorted ascending by `(dist, issuer)` (Hop-1 prioritized!) and capped at `max_class_package_bytes` if `Some`.
+    /// - Computes overall `readers_fingerprint` and per-class `DropClassReceipt`.
+    /// - Delta-check against `self.drop_sent_log.get(transport_id)`:
+    ///   - If `!force_full` and `existing.readers_fingerprint == readers_fingerprint && existing.classes == class_receipts`,
+    ///     returns `Ok(None)` (slot on `transport_id` is already 100% up-to-date!).
+    /// - Otherwise returns `Ok(Some((subpackages, receipt)))`.
+    pub fn prepare_drop_sync_subpackages(
+        &self,
+        transport_id: &str,
+        custom_readers: Option<&[(&str, u8)]>,
+        max_class_package_bytes: Option<usize>,
+        force_full: bool,
+    ) -> Result<Option<(Vec<DropClassSubpackage>, DropSyncReceipt)>, WotError> {
+        let readers: Vec<(Did, u8)> = if let Some(custom) = custom_readers {
+            let mut map = BTreeMap::new();
+            for &(raw_did, class) in custom {
+                if !(1..=3).contains(&class) {
+                    continue;
+                }
+                let canonical = canonicalize_did(raw_did)?;
+                if canonical == self.self_did {
+                    continue;
+                }
+                map.entry(canonical)
+                    .and_modify(|existing: &mut u8| *existing = (*existing).min(class))
+                    .or_insert(class);
+            }
+            let mut r: Vec<(Did, u8)> = map.into_iter().collect();
+            r.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+            r
+        } else {
+            self.authorized_drop_readers()
+        };
+
+        let overall_readers_fp = compute_readers_fingerprint(&readers);
+
+        let graph = self.get_or_build_graph_cache();
+        let distances = graph.shortest_distances_from_self();
+
+        struct CandidateList {
+            dist: u8,
+            issuer: Did,
+            version: u64,
+            wire_string: String,
+            fingerprint: u64,
+        }
+
+        let mut subpackages = Vec::new();
+        let mut class_receipts = Vec::new();
+
+        for c in 1..=3 {
+            let mut class_reader_dids: Vec<Did> = readers
+                .iter()
+                .filter(|(_, class)| *class == c)
+                .map(|(did, _)| did.clone())
+                .collect();
+
+            if class_reader_dids.is_empty() {
+                continue;
+            }
+            class_reader_dids.sort();
+
+            let class_reader_pairs: Vec<(Did, u8)> = class_reader_dids
+                .iter()
+                .map(|d| (d.clone(), c))
+                .collect();
+            let class_readers_fp = compute_readers_fingerprint(&class_reader_pairs);
+
+            let mut class_candidates = Vec::new();
+
+            // 1. Own signed list (dist = 0, target_dist = c)
+            if let Some(own_list) = &self.own_signed_list {
+                let target_dist = c;
+                if own_list.max_hops >= target_dist
+                    && let Some(wire) = own_list.to_redacted_wire_string(target_dist)
+                {
+                    let fp = own_list.disclosure_fingerprint(target_dist);
+                    class_candidates.push(CandidateList {
+                        dist: 0,
+                        issuer: self.self_did.clone(),
+                        version: own_list.v,
+                        wire_string: wire,
+                        fingerprint: fp,
+                    });
+                }
+            }
+
+            // 2. Reachable third-party lists
+            for (iss, stored) in &self.raw_list_store {
+                if iss == &self.self_did {
+                    continue;
+                }
+
+                let iss_node_id = match graph.did_to_id.get(iss) {
+                    Some(&id) => id,
+                    None => continue,
+                };
+
+                let dist = match distances.get(&iss_node_id) {
+                    Some(&d) => d,
+                    None => continue,
+                };
+
+                let target_dist = dist.saturating_add(c);
+                if stored.max_hops < target_dist {
+                    continue;
+                }
+
+                if let Some(wire) = stored.to_redacted_wire_string(target_dist) {
+                    let fp = stored.disclosure_fingerprint(target_dist);
+                    class_candidates.push(CandidateList {
+                        dist,
+                        issuer: iss.clone(),
+                        version: stored.v,
+                        wire_string: wire,
+                        fingerprint: fp,
+                    });
+                }
+            }
+
+            // Sort ascending by (dist, issuer) (Hop-1 prioritized!)
+            class_candidates.sort_by(|a, b| a.dist.cmp(&b.dist).then_with(|| a.issuer.cmp(&b.issuer)));
+
+            let mut included_lists = Vec::new();
+            let mut receipt_entries = Vec::new();
+            let mut current_bytes = 31usize;
+
+            for cand in class_candidates {
+                let added_bytes = if included_lists.is_empty() {
+                    cand.wire_string.len() + 2
+                } else {
+                    cand.wire_string.len() + 3
+                };
+
+                if let Some(limit) = max_class_package_bytes
+                    && current_bytes.saturating_add(added_bytes) > limit
+                {
+                    continue;
+                }
+
+                current_bytes = current_bytes.saturating_add(added_bytes);
+                included_lists.push(cand.wire_string);
+                receipt_entries.push(SyncReceiptEntry {
+                    issuer_did: cand.issuer,
+                    version: cand.version,
+                    disclosure_fingerprint: cand.fingerprint,
+                });
+            }
+
+            subpackages.push(DropClassSubpackage {
+                distance_class: c,
+                reader_dids: class_reader_dids,
+                package: WotSyncPackage {
+                    format_version: 1,
+                    lists: included_lists,
+                },
+            });
+
+            class_receipts.push(DropClassReceipt {
+                distance_class: c,
+                readers_fingerprint: class_readers_fp,
+                entries: receipt_entries,
+            });
+        }
+
+        drop(graph);
+
+        let overall_receipt = DropSyncReceipt {
+            transport_id: transport_id.to_string(),
+            readers_fingerprint: overall_readers_fp,
+            classes: class_receipts,
+        };
+
+        if !force_full
+            && let Some(existing) = self.drop_sent_log.get(transport_id)
+            && existing.readers_fingerprint == overall_receipt.readers_fingerprint
+            && existing.classes == overall_receipt.classes
+        {
+            return Ok(None);
+        }
+
+        Ok(Some((subpackages, overall_receipt)))
+    }
+
+    /// Commits a drop synchronization receipt to `drop_sent_log`.
+    pub fn commit_drop_sync_receipt(&mut self, receipt: DropSyncReceipt, now_secs: u64) {
+        self.drop_sent_log.insert(
+            receipt.transport_id,
+            DropSentRecord {
+                readers_fingerprint: receipt.readers_fingerprint,
+                classes: receipt.classes,
+                committed_at: now_secs,
+            },
+        );
+    }
+
+    /// Clears either a specific transport entry or all entries from `drop_sent_log`.
+    pub fn clear_drop_sent_log(&mut self, transport_id: Option<&str>) {
+        if let Some(tid) = transport_id {
+            self.drop_sent_log.remove(tid);
+        } else {
+            self.drop_sent_log.clear();
         }
     }
 

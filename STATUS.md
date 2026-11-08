@@ -1,12 +1,18 @@
 ---
 project: humoco-web-of-trust
-version: "0.1.0"
+version: "0.2.0"
 phase: "active-development"
 health: "green"
-last_updated: "2026-11-01"
+last_updated: "2026-11-08"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "WOT-011"
+    title: "Sent-Log transport binding & distance-class subpackages for encrypted multi-reader drop trust list sync"
+    status: "done"
+    priority: "high"
+    depends_on: ["WOT-005", "WOT-010"]
+    description: "Added transport-bound Sent-Log isolation (`prepare_drop_sync_subpackages`, `export_drop_sync_subpackage_for_distance_class`), distance-class subpackage segregation preventing multi-reader cross-exposure, authorized drop readers evaluation excluding Level 0 entries, and zero cross-repo Cargo dependencies (29 tests: 6 unit + 23 integration passing)."
   - id: "WOT-010"
     title: "Global Hop Policy, 1-Year Freshness Grace + Decay & BinaryFuse64 Provider Seals (ADR-08)"
     status: "done"
@@ -67,18 +73,19 @@ priority_tasks:
 
 ## Current Focus
 
-**Full Core & App Ecosystem Integration & Provider Seals Completed (`v0.1.0` / `WOT-010`).**
+**Full Core & App Ecosystem Integration, Drop Sync Subpackages & Provider Seals Completed (`v0.2.0` / `WOT-011`).**
 Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-Rust-Crate (`#![forbid(unsafe_code)]`) vollständig implementiert:
+- **Drop Sync Isolation & Distance-Class Subpackages (`WOT-011`)**: Transportgebundene `Sent-Log`-Isolation (`prepare_drop_sync_subpackages`, `export_drop_sync_subpackage_for_distance_class`), distanzbasierte Subpaket-Aufteilung zur Verhinderung von Mehrleser-Metadatenlecks auf Ablagen, Berechtigtenprüfung unter Ausschluss von Stufe-0-Kontakten und zero neue Cargo-Dependencies (29 Tests: 6 Unit + 23 Integrationstests).
 - **Global Hop Policy & Freshness Decay (`WOT-010`)**: Einstellbare Reichweite `TrustRegister::set_own_list_max_hops` (`own_list_max_hops = 3` Standard, entkoppelt von `max_eval_depth = 5` / `max_import_depth = 5` mit Beibehaltung von 1-Hop-Bürgschaftsbrücken), 1-Jahr-Schonfrist (`freshness_grace_secs = 31_536_000`) plus 1-Jahr-Halbwertszeit-Dämpfungskurve und $O(N)$ `continue`-basiertes Packen in `prepare_sync_package`.
 - **Pure-Rust Safe `BinaryFuse64` Provider Seals (`ADR-08`)**: Signierte Verbands- und Prüfsiegelfilter (`wot-provider-filter+v1`, $2^{-64}$ Falsch-Positiv-Rate gegen Key-Grinding, keine neuen Cargo-Dependencies) zur kompakten Offline-Zertifizierung tausender Erzeuger/Dienstleister unter Shannon-Shared-Edge-Factoring.
-- **Core & App Hooks**: `evaluate_trust_from_observer` / `TrustRegister::evaluate_voucher_for_observer` (für Gravitational Coin Selection `s_wot`) sowie Third-Party-Export-Guard in `prepare_sync_package` integriert in `human-money-core` und `human-money-app` (`APP-044` / `APP-052`).
+- **Core & App Hooks**: `evaluate_trust_from_observer` / `TrustRegister::evaluate_voucher_for_observer` (für Gravitational Coin Selection `s_wot`) sowie Third-Party-Export-Guard in `prepare_sync_package` integriert in `human-money-core` und `human-money-app` (`APP-044` / `APP-052` / `APP-059`).
 
 ### MVP Priority Chain
 
 ```
-[WOT-001, WOT-002, WOT-004, WOT-005, WOT-006, WOT-007, WOT-008, WOT-009, WOT-010] (Done ✅)
+[WOT-001, WOT-002, WOT-004, WOT-005, WOT-006, WOT-007, WOT-008, WOT-009, WOT-010, WOT-011] (Done ✅)
     ├── CORE-010 / CORE-011 (Sync Piggybacking, Multi-Recipient Trust Containers & s_wot) [Done ✅]
-    └── APP-044 / APP-052 (Global Reach Selector, TrustBadges, Passwordless .wot & Provider Seals) [Done ✅]
+    └── APP-044 / APP-052 / APP-059 (Global Reach Selector, TrustBadges, Passwordless .wot, Provider Seals & Drop Sync) [Done ✅]
 ```
 
 ## Architecture
@@ -110,7 +117,7 @@ Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-
 
 ## Known Issues
 
-- Keine offenen Blocker in `humoco-web-of-trust`. Das Rust-Crate `humoco-wot` (15 Integrationstests inkl. Observer-Scoring & Export-Guard) ist vollständig implementiert und in Core & App integriert.
+- Keine offenen Blocker in `humoco-web-of-trust`. Das Rust-Crate `humoco-wot` (29 Tests: 6 Unit + 23 Integrationstests inkl. Observer-Scoring, Export-Guard, Provider Seals und Drop Subpackages) ist vollständig implementiert und in Core & App integriert.
 
 ## Recent Milestones
 
@@ -126,6 +133,7 @@ Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-
 - [x] Erweiterung des WoT-Simulators (`wot-simulation/index.html`) um echten Nadelöhr-Schutz (Shared-Edge Factoring nach ADR-01).
 - [x] **WOT-004 & App/Core-Härtung (2026-10-31)**: `evaluate_trust_from_observer` / `TrustRegister::evaluate_voucher_for_observer` für empfängerorientiertes Coin-Selection-Scoring (`s_wot`), Third-Party-Export-Guard in `prepare_sync_package` für unbewertete/Level-0-Empfänger sowie vollständige UI/UX-Umsetzung des Vertrauens-Ausweises (`<TrustBadge />`) in `human-money-app`.
 - [x] **WOT-010: Global Hop Policy, 1-Year Freshness Grace + Decay & BinaryFuse64 Provider Seals (ADR-08, 2026-11-01)**: Added `TrustRegister::set_own_list_max_hops` (`own_list_max_hops = 3` default, decoupled `max_eval_depth = 5` / `max_import_depth = 5` preserving guarantor bridges at 1 hop), 1-year grace period + 1-year half-life freshness curve (`freshness_grace_secs = 31_536_000`), `O(N)` `continue`-based sync package packing, pure-Rust safe `BinaryFuse64` signed provider filters (`wot-provider-filter+v1`, $2^{-64}$ anti-grinding false-positive rate, zero new Cargo dependencies) evaluated across both voucher creators and guarantors under Shannon Shared-Edge Factoring, and German `ADR-08` (`docs/adr/adr-08-dienstleister-pruefsiegel-binary-fuse.md`).
+- [x] **WOT-011: Sent-Log Transport Binding & Distance-Class Subpackages for Drop Sync (2026-11-08)**: Transportgebundene `Sent-Log`-Isolation (`prepare_drop_sync_subpackages`, `export_drop_sync_subpackage_for_distance_class`), distanzbasierte Subpaket-Aufteilung zur Verhinderung von Mehrleser-Metadatenlecks auf Ablagen, Berechtigtenprüfung unter Ausschluss von Stufe-0-Kontakten und zero neue Cargo-Dependencies (29 Tests: 6 Unit + 23 Integrationstests passing).
 
 ## Next Milestones
 

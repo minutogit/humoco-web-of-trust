@@ -2,6 +2,7 @@ use std::cell::{Ref, RefCell};
 use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 
+pub use crate::sync::DropSentRecord;
 use crate::error::WotError;
 use crate::graph::EgoGraphCache;
 use crate::identity::{canonicalize_did, Did, WotSigner};
@@ -87,6 +88,9 @@ pub struct TrustRegister {
     pub raw_list_store: BTreeMap<Did, StoredSdJwt>,
     /// Log of lists sent to contacts: recipient_did -> issuer_did -> SentRecord.
     pub sent_log: BTreeMap<Did, BTreeMap<Did, SentRecord>>,
+    /// Transport-bound log of prepared drop slot subpackages: transport_id -> DropSentRecord.
+    #[serde(default)]
+    pub drop_sent_log: BTreeMap<String, DropSentRecord>,
     /// Local evaluation and synchronisation policy.
     pub policy: WotPolicy,
     /// Verified provider filter documents providing certified member seals.
@@ -108,6 +112,7 @@ impl TrustRegister {
             own_list_dirty: false,
             raw_list_store: BTreeMap::new(),
             sent_log: BTreeMap::new(),
+            drop_sent_log: BTreeMap::new(),
             policy,
             provider_filters: BTreeMap::new(),
             graph_cache: RefCell::new(None),
