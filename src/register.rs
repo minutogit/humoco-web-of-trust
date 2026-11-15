@@ -41,7 +41,7 @@ impl Default for WotPolicy {
     fn default() -> Self {
         Self {
             unreciprocated_hops: 1,
-            own_list_max_hops: 3,
+            own_list_max_hops: 2,
             max_import_depth: 5,
             max_eval_depth: 5,
             guarantor_weight: 0.85,
@@ -169,7 +169,8 @@ impl TrustRegister {
             peer_list.max_hops
         };
 
-        Some(desired.min(peer_cap))
+        // Never forward beyond the maximum supported 3-hop horizon even if a peer's header declares > 3.
+        Some(desired.min(peer_cap).min(3))
     }
 
     /// Adds or updates a direct contact trust assignment.
@@ -221,9 +222,9 @@ impl TrustRegister {
         Ok(removed)
     }
 
-    /// Sets the user's global maximum hop forwarding policy and propagates it to all active direct contacts.
+    /// Sets the user's global maximum hop forwarding policy (1..=3) and propagates it to all active direct contacts.
     pub fn set_own_list_max_hops(&mut self, max_hops: u8, now_secs: u64) -> Result<(), WotError> {
-        if !(1..=8).contains(&max_hops) {
+        if !(1..=3).contains(&max_hops) {
             return Err(WotError::InvalidHopLimit(max_hops));
         }
 

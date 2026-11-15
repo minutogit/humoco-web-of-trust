@@ -203,7 +203,7 @@ impl TrustRegister {
                 };
 
                 let target_dist = dist.saturating_add(1);
-                if stored.max_hops < target_dist {
+                if stored.max_hops.min(3) < target_dist {
                     continue;
                 }
 
@@ -444,7 +444,7 @@ impl TrustRegister {
                 };
 
                 let target_dist = dist.saturating_add(c);
-                if stored.max_hops < target_dist {
+                if stored.max_hops.min(3) < target_dist {
                     continue;
                 }
 

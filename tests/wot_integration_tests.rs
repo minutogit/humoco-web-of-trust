@@ -226,6 +226,10 @@ fn test_04_handshake_flow_and_reciprocal_tit_for_tat() {
 
     let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
     let mut reg_bob = TrustRegister::new(&did_bob, WotPolicy::default()).unwrap();
+    assert_eq!(reg_alice.policy.own_list_max_hops, 2);
+
+    // Explicitly allow 3-hop propagation on Alice for this test
+    reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
 
     // Alice adds Charlie and signs her list
     reg_alice
@@ -285,6 +289,7 @@ fn test_05_two_phase_sync_receipt_and_union_merge_delta() {
 
     let now_secs = 1_700_000_000;
     let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+    reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
 
     reg_alice
         .set_contact_trust(&did_bob, 2, 3, now_secs)
@@ -992,6 +997,7 @@ fn test_14_third_party_sync_export_guard() {
 
     let now_secs = 1_700_000_000;
     let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+    reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
 
     // 1. Alice configures direct trust:
     // - Bob: level 2
@@ -1251,9 +1257,17 @@ fn test_16_global_hop_management_and_guarantor_bridge_retention() {
     reg.set_contact_trust(&did_carol, 0, 4, now_secs).unwrap();
     reg.own_list_dirty = false;
 
-    // Reject invalid hops
+    // Default policy is 2 hops
+    assert_eq!(reg.policy.own_list_max_hops, 2);
+
+    // Reject invalid hops (0 and > 3)
     assert!(matches!(reg.set_own_list_max_hops(0, now_secs + 10), Err(WotError::InvalidHopLimit(0))));
+    assert!(matches!(reg.set_own_list_max_hops(4, now_secs + 10), Err(WotError::InvalidHopLimit(4))));
     assert!(matches!(reg.set_own_list_max_hops(9, now_secs + 10), Err(WotError::InvalidHopLimit(9))));
+
+    // Accept up to 3 hops
+    reg.set_own_list_max_hops(3, now_secs + 10).unwrap();
+    assert_eq!(reg.policy.own_list_max_hops, 3);
 
     // Set global max hops to 1
     reg.set_own_list_max_hops(1, now_secs + 10).unwrap();
@@ -1524,6 +1538,7 @@ fn test_20_drop_subpackages_selective_disclosure_and_signature_integrity() {
 
     let now_secs = 1_700_000_000;
     let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+    reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
 
     // Alice sets trust for Bob: level 2, desired_hops 1
     reg_alice.set_contact_trust(&did_bob, 2, 1, now_secs).unwrap();
@@ -1663,6 +1678,7 @@ fn test_21_drop_sent_log_transport_binding_idempotency_and_delta() {
 
     let now_secs = 1_700_000_000;
     let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+    reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
     reg_alice.set_contact_trust(&did_bob, 2, 2, now_secs).unwrap();
     reg_alice.sign_own_list(&signer_alice, now_secs).unwrap();
 
@@ -1747,6 +1763,7 @@ fn test_22_drop_sync_isolation_from_1_to_1_sent_log() {
 
     let now_secs = 1_700_000_000;
     let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+    reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
     reg_alice.set_contact_trust(&did_bob, 2, 2, now_secs).unwrap();
     reg_alice.sign_own_list(&signer_alice, now_secs).unwrap();
 
@@ -1798,6 +1815,7 @@ fn test_23_authorized_drop_readers_multi_hop_and_level_zero_exclusion() {
 
     let now_secs = 1_700_000_000;
     let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+    reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
 
     // Alice adds Bob at Level 2 (30%/60%) -> Hop 1
     reg_alice.set_contact_trust(&did_bob, 2, 3, now_secs).unwrap();
