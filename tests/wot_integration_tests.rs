@@ -1911,3 +1911,140 @@ fn test_23_authorized_drop_readers_multi_hop_and_level_zero_exclusion() {
     // Empty reader list fingerprint is 0
     assert_eq!(humoco_wot::sync::compute_readers_fingerprint(&[]), 0);
 }
+
+#[test]
+fn test_24_drop_sync_freshness_prioritization_under_byte_cap() {
+    let (signer_alice, did_alice) = create_identity();
+    let (signer_peer_a, did_peer_a) = create_identity();
+    let (signer_peer_b, did_peer_b) = create_identity();
+    let (_signer_leaf_a, did_leaf_a) = create_identity();
+    let (_signer_leaf_b, did_leaf_b) = create_identity();
+
+    // Put older list on lexicographically smaller DID and newer list on larger DID
+    // so sorting strictly tests (dist ASC, version DESC, issuer ASC).
+    let (signer_older, did_older, signer_newer, did_newer) = if did_peer_a < did_peer_b {
+        (signer_peer_a, did_peer_a, signer_peer_b, did_peer_b)
+    } else {
+        (signer_peer_b, did_peer_b, signer_peer_a, did_peer_a)
+    };
+
+    let now_secs = 1_700_000_000;
+    let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+    reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
+    reg_alice.set_contact_trust(&did_older, 2, 3, now_secs).unwrap();
+    reg_alice.set_contact_trust(&did_newer, 2, 3, now_secs).unwrap();
+    reg_alice.ensure_own_list_signed(&signer_alice, now_secs).unwrap();
+
+    let (older_wire, _) = create_and_sign_sd_jwt(
+        &signer_older,
+        now_secs - 500,
+        now_secs - 500,
+        3,
+        &[(did_leaf_a.clone(), 2, 3)],
+    )
+    .unwrap();
+    let (newer_wire, _) = create_and_sign_sd_jwt(
+        &signer_newer,
+        now_secs - 10,
+        now_secs - 10,
+        3,
+        &[(did_leaf_b.clone(), 2, 3)],
+    )
+    .unwrap();
+
+    let pkg_in = WotSyncPackage {
+        format_version: 1,
+        lists: vec![older_wire, newer_wire],
+    };
+    reg_alice.import_sync_package(&pkg_in, None, now_secs).unwrap();
+
+    // Measure un-capped Hop-1 package: [own (dist=0), newer (dist=1), older (dist=1)]
+    let (full_subs, _) = reg_alice
+        .prepare_drop_sync_subpackages("card-sync-test", None, None, true)
+        .unwrap()
+        .unwrap();
+    let hop1_full = full_subs.iter().find(|s| s.distance_class == 1).unwrap();
+    assert_eq!(hop1_full.package.lists.len(), 3);
+    let own_len = hop1_full.package.lists[0].len();
+    let first_third_party_len = hop1_full.package.lists[1].len();
+    let cap_for_own_plus_one = 31 + (own_len + 2) + (first_third_party_len + 3) + 10;
+
+    let (capped_subs, _) = reg_alice
+        .prepare_drop_sync_subpackages("card-sync-test", None, Some(cap_for_own_plus_one), true)
+        .unwrap()
+        .unwrap();
+    let hop1_capped = capped_subs.iter().find(|s| s.distance_class == 1).unwrap();
+    assert_eq!(hop1_capped.package.lists.len(), 2);
+
+    let (picked_iss, _) = parse_and_verify_sd_jwt(&hop1_capped.package.lists[1], now_secs).unwrap();
+    assert_eq!(
+        picked_iss, did_newer,
+        "Fresher third-party list (higher version) must win over older list even with larger DID"
+    );
+}
+
+#[test]
+fn test_25_import_discards_under_redacted_disclosures_for_multi_hop() {
+    let (signer_alice, did_alice) = create_identity();
+    let (signer_bob, did_bob) = create_identity();
+    let (signer_carol, did_carol) = create_identity();
+    let (_signer_dave, did_dave) = create_identity();
+    let (_signer_eve, did_eve) = create_identity();
+
+    let now_secs = 1_700_000_000;
+    let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+    reg_alice.set_contact_trust(&did_bob, 2, 3, now_secs).unwrap();
+    reg_alice.ensure_own_list_signed(&signer_alice, now_secs).unwrap();
+
+    // Bob (Hop 1) lists Carol (becomes Hop 2) with contact_max_hops = 3
+    let (bob_wire, _) = create_and_sign_sd_jwt(
+        &signer_bob,
+        now_secs,
+        now_secs,
+        3,
+        &[(did_carol.clone(), 2, 3)],
+    )
+    .unwrap();
+
+    // Carol (Hop 2) created an unredacted list containing:
+    // - Dave with contact_max_hops = 1 (MUST NOT be kept at hop_dist = 2!)
+    // - Eve with contact_max_hops = 2 (allowed at hop_dist = 2)
+    let (carol_unredacted_wire, _) = create_and_sign_sd_jwt(
+        &signer_carol,
+        now_secs,
+        now_secs,
+        3,
+        &[(did_dave.clone(), 2, 1), (did_eve.clone(), 2, 2)],
+    )
+    .unwrap();
+
+    let pkg = WotSyncPackage {
+        format_version: 1,
+        lists: vec![bob_wire, carol_unredacted_wire],
+    };
+    reg_alice
+        .import_sync_package(&pkg, Some(&did_bob), now_secs)
+        .unwrap();
+
+    let stored_carol = reg_alice
+        .raw_list_store
+        .get(&did_carol)
+        .expect("Carol must be imported via Bob at hop 2");
+    assert_eq!(
+        stored_carol.disclosures.len(),
+        1,
+        "Under-redacted contact_max_hops=1 disclosure must be discarded for Hop-2 issuer"
+    );
+    let kept_record = stored_carol.disclosures.values().next().unwrap();
+    assert_eq!(kept_record.contact_max_hops, 2);
+
+    assert!(
+        reg_alice.evaluate_did(&did_eve, Some(now_secs)).unwrap().score > 0.0,
+        "Properly permitted contact_max_hops=2 disclosure (Eve) remains usable"
+    );
+    assert_eq!(
+        reg_alice.evaluate_did(&did_dave, Some(now_secs)).unwrap().score,
+        0.0,
+        "Under-redacted disclosure (Dave, contact_max_hops=1) must not contribute to trust graph"
+    );
+}

@@ -234,8 +234,13 @@ impl TrustRegister {
 
         drop(graph);
 
-        // Sort candidates ascending by (dist, issuer)
-        candidates.sort_by(|a, b| a.dist.cmp(&b.dist).then_with(|| a.issuer.cmp(&b.issuer)));
+        // Sort candidates ascending by dist, then descending by version (newest first), then issuer
+        candidates.sort_by(|a, b| {
+            a.dist
+                .cmp(&b.dist)
+                .then_with(|| b.version.cmp(&a.version))
+                .then_with(|| a.issuer.cmp(&b.issuer))
+        });
 
         // Assemble package respecting max_bytes with O(N) byte tracking
         let mut included_lists = Vec::new();
@@ -460,8 +465,13 @@ impl TrustRegister {
                 }
             }
 
-            // Sort ascending by (dist, issuer) (Hop-1 prioritized!)
-            class_candidates.sort_by(|a, b| a.dist.cmp(&b.dist).then_with(|| a.issuer.cmp(&b.issuer)));
+            // Sort ascending by dist, then descending by version (newest first), then issuer (Hop-1 prioritized!)
+            class_candidates.sort_by(|a, b| {
+                a.dist
+                    .cmp(&b.dist)
+                    .then_with(|| b.version.cmp(&a.version))
+                    .then_with(|| a.issuer.cmp(&b.issuer))
+            });
 
             let mut included_lists = Vec::new();
             let mut receipt_entries = Vec::new();
@@ -600,21 +610,26 @@ impl TrustRegister {
                         continue;
                     }
 
-                    // Admission check:
-                    // a) Direct handshake peer (before set_contact_trust)
+                    // Admission check & hop distance calculation:
+                    // a) Direct handshake peer (before set_contact_trust) -> hop_dist = 1
                     let is_direct_peer = direct_sender_canonical.as_deref() == Some(&candidate_iss);
-                    // b) In direct own_contacts (even level 0)
+                    // b) In direct own_contacts (even level 0) -> hop_dist = 1
                     let is_direct_contact = self.own_contacts.contains_key(&candidate_iss);
                     // c) Reachable in graph with level >= 1 within policy.max_import_depth
-                    let is_reachable = graph
+                    let graph_dist = graph
                         .did_to_id
                         .get(&candidate_iss)
                         .and_then(|id| distances.get(id))
-                        .map(|&d| d < self.policy.max_import_depth)
-                        .unwrap_or(false);
+                        .copied();
 
-                    if is_direct_peer || is_direct_contact || is_reachable {
-                        adm.push(raw);
+                    let hop_dist = if is_direct_peer || is_direct_contact {
+                        Some(1)
+                    } else {
+                        graph_dist.filter(|&d| d < self.policy.max_import_depth)
+                    };
+
+                    if let Some(hd) = hop_dist {
+                        adm.push((raw, hd));
                     } else {
                         rem.push(raw);
                     }
@@ -623,7 +638,7 @@ impl TrustRegister {
             };
 
             // 2. Cryptographic verification & storage phase (graph cache is released)
-            for raw in admitted {
+            for (raw, hop_dist) in admitted {
                 match parse_and_verify_sd_jwt(raw, now_secs) {
                     Err(WotError::FutureTimestamp { .. }) => {
                         stats.rejected_timestamp += 1;
@@ -631,7 +646,12 @@ impl TrustRegister {
                     Err(_) => {
                         stats.rejected_crypto += 1;
                     }
-                    Ok((iss, new_stored)) => {
+                    Ok((iss, mut new_stored)) => {
+                        // Discard under-redacted disclosures whose contact_max_hops is smaller than issuer's hop distance
+                        new_stored
+                            .disclosures
+                            .retain(|_, record| record.contact_max_hops >= hop_dist);
+
                         if let Some(existing) = self.raw_list_store.get_mut(&iss) {
                             if existing.v == new_stored.v && existing.jws_compact != new_stored.jws_compact {
                                 // Conflicting JWS bodies for identical version -> Equivocation detected!
