@@ -3,10 +3,16 @@ project: humoco-web-of-trust
 version: "0.2.0"
 phase: "active-development"
 health: "green"
-last_updated: "2026-11-15"
+last_updated: "2026-11-17"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "WOT-013"
+    title: "ADR-09 KeySuccessorAttestation & ADR-10 ServerOffenderList via EquivocationProof"
+    status: "done"
+    priority: "high"
+    depends_on: ["WOT-010"]
+    description: "Added German ADR-09 (`docs/adr/adr-09-schluesselnachfolge-key-successor-attestation.md`), German ADR-10 (`docs/adr/adr-10-server-sanktionsliste-server-offender-list.md`), glossary definitions (`0000-glossar.md`), and standalone `#![forbid(unsafe_code)]` WASM-portable module `src/successor_and_offenders.rs` (`KeySuccessorAttestation` dual-signed rotation + bounded acyclic `resolve_successor_chain`, `ServerOffenderList` validating `HUMOCO_LOCK_RECEIPT_V1` `EquivocationProof` + `HUMOCO-LOCK-DELEGATE-V1` `admin_pub`/`lock_pub` revocation + `BinaryFuse64` denylist filter). Verified with `cargo fmt --check`, `clippy -D warnings` (0 warnings), `cargo check --target wasm32-unknown-unknown --offline`, and 33 tests (6 unit + 27 integration)."
   - id: "WOT-012"
     title: "Drop-Sync Freshness Prioritization & Defense-in-Depth Redaction Verification"
     status: "done"
@@ -107,6 +113,8 @@ Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-
   - [`0006`: Vertrauens-Propagation](docs/adr/adr-06-asynchrones-gossip-protokoll.md) (Gossip, Sent-Log Delta-Sync, topologischer Spam-Filter & Union-Merge)
   - [`0007`: Datenstruktur, Speicher & Schnittstellen](docs/adr/adr-07-datenstruktur-speicher-und-schnittstellen.md) (Dual-Storage `TrustRegister` + `EgoGraphCache`, Handschlag & Core-Schnittstellen)
   - [`0008` / `ADR-08`: Dienstleister-Prüfsiegel & Verbände](docs/adr/adr-08-dienstleister-pruefsiegel-binary-fuse.md) (Pure-Rust BinaryFuse64 Filter, $2^{-64}$ Anti-Grinding, Shannon-Integration)
+  - [`0009` / `ADR-09`: Schlüsselnachfolge & Anti-Vampire-Schutz](docs/adr/adr-09-schluesselnachfolge-key-successor-attestation.md) (`KeySuccessorAttestation` Dual-Signatur- & Notfall-Nachfolge, max. 8 Hops)
+  - [`0010` / `ADR-10`: Server-Sanktionsliste (`ServerOffenderList`)](docs/adr/adr-10-server-sanktionsliste-server-offender-list.md) (`EquivocationProof`, `HUMOCO-LOCK-DELEGATE-V1`, `BinaryFuse64`-Sperrfilter)
 - **Research documents**: Concept canvas, Stranger discovery protocol, Game theory & attack vectors
 - **WoT Simulator**: Interactive HTML simulation for network visualization (`wot-simulation/index.html`)
 
@@ -124,7 +132,7 @@ Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-
 
 ## Known Issues
 
-- Keine offenen Blocker in `humoco-web-of-trust`. Das Rust-Crate `humoco-wot` (31 Tests: 6 Unit + 25 Integrationstests inkl. Observer-Scoring, Export-Guard, Provider Seals, Drop Subpackages, Freshness Prioritization & Redaction Check) ist vollständig implementiert und in Core & App integriert.
+- Keine offenen Blocker in `humoco-web-of-trust`. Das Rust-Crate `humoco-wot` (33 Tests: 6 Unit + 27 Integrationstests inkl. Observer-Scoring, Export-Guard, Provider Seals, Drop Subpackages, Freshness Prioritization, Redaction Check, `KeySuccessorAttestation` & `ServerOffenderList`) ist vollständig implementiert und WASM-geprüft.
 
 ## Recent Milestones
 
@@ -142,6 +150,7 @@ Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-
 - [x] **WOT-010: Global Hop Policy, 1-Year Freshness Grace + Decay & BinaryFuse64 Provider Seals (ADR-08, 2026-11-01)**: Added `TrustRegister::set_own_list_max_hops` (`own_list_max_hops = 3` default, decoupled `max_eval_depth = 5` / `max_import_depth = 5` preserving guarantor bridges at 1 hop), 1-year grace period + 1-year half-life freshness curve (`freshness_grace_secs = 31_536_000`), `O(N)` `continue`-based sync package packing, pure-Rust safe `BinaryFuse64` signed provider filters (`wot-provider-filter+v1`, $2^{-64}$ anti-grinding false-positive rate, zero new Cargo dependencies) evaluated across both voucher creators and guarantors under Shannon Shared-Edge Factoring, and German `ADR-08` (`docs/adr/adr-08-dienstleister-pruefsiegel-binary-fuse.md`).
 - [x] **WOT-011: Sent-Log Transport Binding & Distance-Class Subpackages for Drop Sync (2026-11-08)**: Transportgebundene `Sent-Log`-Isolation (`prepare_drop_sync_subpackages`, `export_drop_sync_subpackage_for_distance_class`), distanzbasierte Subpaket-Aufteilung zur Verhinderung von Mehrleser-Metadatenlecks auf Ablagen, Berechtigtenprüfung unter Ausschluss von Stufe-0-Kontakten und zero neue Cargo-Dependencies (29 Tests: 6 Unit + 23 Integrationstests passing).
 - [x] **WOT-012: Drop-Sync Freshness Prioritization & Defense-in-Depth Redaction Verification (2026-11-15)**: Sortierung nach `(dist ASC, v DESC, issuer ASC)` im `Sent-Log`-Packer gegen Starvation alter Listen sowie empfängerseitige Redaktions-Tiefenprüfung (`contact_max_hops < hop_distance`) beim Import (`test_24`, `test_25`; 31 Tests: 6 Unit + 25 Integrationstests passing, `clippy` 0 Warnings).
+- [x] **WOT-013: `KeySuccessorAttestation` (`ADR-09`) & `ServerOffenderList` (`ADR-10`, 2026-11-17)**: Spezifikation und `#![forbid(unsafe_code)]`/WASM-Implementierung von `KeySuccessorAttestation` (Dual-Signatur, Zyklus-/8-Hop-Schutz) und `ServerOffenderList` (`EquivocationProof` + `HUMOCO-LOCK-DELEGATE-V1` + `BinaryFuse64`-Sperrfilter; `test_26`, `test_27`; 33 Tests: 6 Unit + 27 Integrationstests passing, `clippy` 0 Warnings, `wasm32-unknown-unknown` grün).
 
 ## Next Milestones
 

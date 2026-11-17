@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::WotError;
-use crate::identity::{canonicalize_did, extract_verifying_key, Did, WotSigner};
+use crate::identity::{Did, WotSigner, canonicalize_did, extract_verifying_key};
 use crate::sd_jwt::{MAX_CLOCK_SKEW_SECS, MAX_VERSION_AHEAD_SECS};
 
 /// The standard type identifier for HuMoCo provider filters.
@@ -101,7 +101,8 @@ impl BinaryFuse64 {
             let arity = 3u32;
             let mut seg_len = 1u32 << (((size as f64).ln() / 3.33_f64.ln() + 2.25).floor() as u32);
             seg_len = seg_len.clamp(32, 262_144);
-            let size_factor = (0.875 + 0.25 * (1_000_000.0_f64.ln()) / (size as f64).ln()).max(1.125);
+            let size_factor =
+                (0.875 + 0.25 * (1_000_000.0_f64.ln()) / (size as f64).ln()).max(1.125);
             let capacity = ((size as f64) * size_factor).round() as u32;
             while seg_len > 256 && capacity.div_ceil(seg_len) < 32 + (arity - 1) {
                 seg_len /= 2;
@@ -130,8 +131,13 @@ impl BinaryFuse64 {
             let mut t2hash = vec![0u64; capacity];
 
             for &k in &unique_keys {
-                let (h0, h1, h2) =
-                    get_hashes(k, seed, segment_count_length, segment_length, segment_length_mask);
+                let (h0, h1, h2) = get_hashes(
+                    k,
+                    seed,
+                    segment_count_length,
+                    segment_length,
+                    segment_length_mask,
+                );
                 t2count[h0 as usize] += 4;
                 t2hash[h0 as usize] ^= k;
 
@@ -160,8 +166,13 @@ impl BinaryFuse64 {
                     let found = (t2count[idx] & 3) as u8;
                     reverse_order.push((k, found));
 
-                    let (h0, h1, h2) =
-                        get_hashes(k, seed, segment_count_length, segment_length, segment_length_mask);
+                    let (h0, h1, h2) = get_hashes(
+                        k,
+                        seed,
+                        segment_count_length,
+                        segment_length,
+                        segment_length_mask,
+                    );
                     let h = [h0, h1, h2];
 
                     let other1 = h[((found + 1) % 3) as usize] as usize;
@@ -185,8 +196,13 @@ impl BinaryFuse64 {
             if reverse_order.len() == size {
                 let mut fingerprints = vec![0u64; capacity];
                 while let Some((k, found)) = reverse_order.pop() {
-                    let (h0, h1, h2) =
-                        get_hashes(k, seed, segment_count_length, segment_length, segment_length_mask);
+                    let (h0, h1, h2) = get_hashes(
+                        k,
+                        seed,
+                        segment_count_length,
+                        segment_length,
+                        segment_length_mask,
+                    );
                     let h = [h0 as usize, h1 as usize, h2 as usize];
                     let fp = mix64(k);
                     let fp = if fp == 0 { 1 } else { fp };
@@ -250,7 +266,9 @@ impl BinaryFuse64 {
     pub fn decode(encoded: &EncodedBinaryFuse64) -> Result<Self, WotError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(&encoded.fingerprints_b64)
-            .map_err(|e| WotError::Serialization(format!("Invalid base64url fingerprints: {}", e)))?;
+            .map_err(|e| {
+                WotError::Serialization(format!("Invalid base64url fingerprints: {}", e))
+            })?;
         if bytes.len() % 8 != 0 {
             return Err(WotError::Serialization(
                 "Fingerprints byte length is not a multiple of 8".to_string(),
@@ -472,9 +490,9 @@ pub fn parse_and_verify_provider_filter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::Ed25519WotSigner;
     use ed25519_dalek::SigningKey;
     use rand_core::OsRng;
-    use crate::identity::Ed25519WotSigner;
 
     fn create_test_signer() -> (Ed25519WotSigner, Did) {
         let sk = SigningKey::generate(&mut OsRng);
@@ -531,7 +549,10 @@ mod tests {
                 false_positives += 1;
             }
         }
-        assert_eq!(false_positives, 0, "Expected 0 false positives out of 10,000 queries");
+        assert_eq!(
+            false_positives, 0,
+            "Expected 0 false positives out of 10,000 queries"
+        );
     }
 
     #[test]

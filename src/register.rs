@@ -1,16 +1,14 @@
+use serde::{Deserialize, Serialize};
 use std::cell::{Ref, RefCell};
 use std::collections::{BTreeMap, HashSet};
-use serde::{Deserialize, Serialize};
 
-pub use crate::sync::DropSentRecord;
 use crate::error::WotError;
 use crate::graph::EgoGraphCache;
-use crate::identity::{canonicalize_did, Did, WotSigner};
-use crate::provider_filter::{parse_and_verify_provider_filter, StoredProviderFilter};
-use crate::scorer::{
-    evaluate_trust_from_observer, evaluate_trust_with_providers, TrustEvaluation,
-};
-use crate::sd_jwt::{create_and_sign_sd_jwt, StoredSdJwt};
+use crate::identity::{Did, WotSigner, canonicalize_did};
+use crate::provider_filter::{StoredProviderFilter, parse_and_verify_provider_filter};
+use crate::scorer::{TrustEvaluation, evaluate_trust_from_observer, evaluate_trust_with_providers};
+use crate::sd_jwt::{StoredSdJwt, create_and_sign_sd_jwt};
+pub use crate::sync::DropSentRecord;
 
 fn default_freshness_grace_secs() -> u64 {
     31_536_000
@@ -122,7 +120,8 @@ impl TrustRegister {
     /// Borrows or lazily builds the in-memory `EgoGraphCache`.
     pub fn get_or_build_graph_cache(&self) -> Ref<'_, EgoGraphCache> {
         if self.graph_cache.borrow().is_none() {
-            let graph = EgoGraphCache::build(&self.self_did, &self.own_contacts, &self.raw_list_store);
+            let graph =
+                EgoGraphCache::build(&self.self_did, &self.own_contacts, &self.raw_list_store);
             *self.graph_cache.borrow_mut() = Some(graph);
         }
         Ref::map(self.graph_cache.borrow(), |opt| opt.as_ref().unwrap())
@@ -246,7 +245,11 @@ impl TrustRegister {
     }
 
     /// Signs the user's current trust list and returns the full SD-JWT wire string.
-    pub fn sign_own_list<S: WotSigner>(&mut self, signer: &S, now_secs: u64) -> Result<String, WotError> {
+    pub fn sign_own_list<S: WotSigner>(
+        &mut self,
+        signer: &S,
+        now_secs: u64,
+    ) -> Result<String, WotError> {
         let signer_did = canonicalize_did(signer.did())?;
         if signer_did != self.self_did {
             return Err(WotError::SignerMismatch {
@@ -260,7 +263,9 @@ impl TrustRegister {
 
         let mut contacts = Vec::new();
         for (did, entry) in &self.own_contacts {
-            let eff_hops = self.effective_hops_for_contact(did).unwrap_or(entry.desired_hops);
+            let eff_hops = self
+                .effective_hops_for_contact(did)
+                .unwrap_or(entry.desired_hops);
             contacts.push((did.clone(), entry.level, eff_hops));
         }
 
@@ -298,7 +303,9 @@ impl TrustRegister {
 
     /// Prunes unreachable third-party lists while preserving an optional direct contact.
     pub fn prune_unreachable_lists_preserving(&mut self, preserve_did: Option<&str>) -> usize {
-        let distances = self.get_or_build_graph_cache().shortest_distances_from_self();
+        let distances = self
+            .get_or_build_graph_cache()
+            .shortest_distances_from_self();
 
         let mut keep_dids = HashSet::new();
         // Direct contacts are always kept (even level 0)
@@ -312,7 +319,10 @@ impl TrustRegister {
         // Keep lists reachable within max_import_depth
         let graph = self.get_or_build_graph_cache();
         for (did, id) in &graph.did_to_id {
-            if distances.get(id).is_some_and(|&dist| dist < self.policy.max_import_depth) {
+            if distances
+                .get(id)
+                .is_some_and(|&dist| dist < self.policy.max_import_depth)
+            {
                 keep_dids.insert(did.clone());
             }
         }
@@ -330,7 +340,11 @@ impl TrustRegister {
     }
 
     /// Imports and verifies a third-party provider filter seal document.
-    pub fn import_provider_filter(&mut self, raw_json: &str, now_secs: u64) -> Result<Did, WotError> {
+    pub fn import_provider_filter(
+        &mut self,
+        raw_json: &str,
+        now_secs: u64,
+    ) -> Result<Did, WotError> {
         let mut parsed = parse_and_verify_provider_filter(raw_json, now_secs)?;
         let iss = parsed.payload.iss.clone();
 
@@ -369,7 +383,10 @@ impl TrustRegister {
             self.invalidate_graph_cache();
             Ok(())
         } else {
-            Err(WotError::InvalidDid(format!("Provider filter {} not found", canonical)))
+            Err(WotError::InvalidDid(format!(
+                "Provider filter {} not found",
+                canonical
+            )))
         }
     }
 

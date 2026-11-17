@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::error::WotError;
-use crate::graph::{level_to_factor, EgoGraphCache};
-use crate::identity::{canonicalize_did, Did};
+use crate::graph::{EgoGraphCache, level_to_factor};
+use crate::identity::{Did, canonicalize_did};
 use crate::provider_filter::StoredProviderFilter;
 use crate::register::WotPolicy;
 
@@ -120,10 +120,7 @@ pub fn exact_path_union_prob(paths: &[Vec<usize>], edge_probs: &[f64], depth: us
     let mut component_map: HashMap<usize, Vec<Vec<usize>>> = HashMap::new();
     for (i, p_i) in paths.iter().enumerate() {
         let root = find(&mut parent, i);
-        component_map
-            .entry(root)
-            .or_default()
-            .push(p_i.clone());
+        component_map.entry(root).or_default().push(p_i.clone());
     }
 
     if component_map.len() > 1 {
@@ -363,38 +360,38 @@ fn evaluate_trust_internal(
                 })
                 .unwrap_or(0);
 
-                let user_level = prov.local_trust_level.max(own_contact_lvl);
-                if user_level == 0 {
-                    continue;
-                }
+            let user_level = prov.local_trust_level.max(own_contact_lvl);
+            if user_level == 0 {
+                continue;
+            }
 
-                let prov_node_id = eval_graph.get_or_create_node(prov_did);
-                eval_graph.add_or_update_edge(0, prov_node_id, user_level, prov.payload.iat);
+            let prov_node_id = eval_graph.get_or_create_node(prov_did);
+            eval_graph.add_or_update_edge(0, prov_node_id, user_level, prov.payload.iat);
 
-                // Check creator
-                if let Some(cert_lvl) = prov.certified_level(canonical_creator) {
+            // Check creator
+            if let Some(cert_lvl) = prov.certified_level(canonical_creator) {
+                eval_graph.add_or_update_edge(
+                    prov_node_id,
+                    creator_node_id,
+                    cert_lvl,
+                    prov.payload.iat,
+                );
+            }
+
+            // Check guarantors
+            for g_did in &dedup_guarantors {
+                if let Some(cert_lvl) = prov.certified_level(g_did) {
+                    let g_node_id = eval_graph.get_or_create_node(g_did);
                     eval_graph.add_or_update_edge(
                         prov_node_id,
-                        creator_node_id,
+                        g_node_id,
                         cert_lvl,
                         prov.payload.iat,
                     );
                 }
-
-                // Check guarantors
-                for g_did in &dedup_guarantors {
-                    if let Some(cert_lvl) = prov.certified_level(g_did) {
-                        let g_node_id = eval_graph.get_or_create_node(g_did);
-                        eval_graph.add_or_update_edge(
-                            prov_node_id,
-                            g_node_id,
-                            cert_lvl,
-                            prov.payload.iat,
-                        );
-                    }
-                }
             }
         }
+    }
 
     // Precalculate base edge probabilities and cache edge attributes before temporary bridges
     let mut edge_prob_map: HashMap<EdgeKey, f64> = HashMap::new();
@@ -525,17 +522,12 @@ fn evaluate_trust_internal(
                     if next_prob >= MIN_PATH_PROBABILITY {
                         visited.insert(edge.to);
                         state.nodes.push(edge.to);
-                        state.levels.push(ctx.edge_level_map.get(&key).copied().unwrap_or(edge.level));
+                        state
+                            .levels
+                            .push(ctx.edge_level_map.get(&key).copied().unwrap_or(edge.level));
                         state.edge_keys.push(key);
 
-                        dfs(
-                            edge.to,
-                            next_prob,
-                            ctx,
-                            visited,
-                            state,
-                            raw_paths,
-                        );
+                        dfs(edge.to, next_prob, ctx, visited, state, raw_paths);
 
                         state.edge_keys.pop();
                         state.levels.pop();
@@ -610,10 +602,7 @@ fn evaluate_trust_internal(
 
     let score = exact_path_union_prob(&indexed_paths, &edge_probs, 0);
 
-    let shortest_hops = raw_paths
-        .iter()
-        .map(|p| (p.node_ids.len() - 1) as u8)
-        .min();
+    let shortest_hops = raw_paths.iter().map(|p| (p.node_ids.len() - 1) as u8).min();
 
     let mut oldest_list_iat: Option<u64> = None;
     for p in &raw_paths {

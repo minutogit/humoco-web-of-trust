@@ -1,12 +1,12 @@
-use std::collections::{BTreeMap, HashSet};
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashSet};
 
 use crate::error::WotError;
-use crate::identity::{canonicalize_did, extract_verifying_key, Did, Digest128, WotSigner};
+use crate::identity::{Did, Digest128, WotSigner, canonicalize_did, extract_verifying_key};
 
 pub const SD_JWT_TYP: &str = "wot-trustlist+sd-jwt";
 pub const SD_JWT_ALG: &str = "EdDSA";
@@ -115,7 +115,9 @@ pub fn encode_disclosure(
     contact_max_hops: u8,
 ) -> Result<(String, Digest128), WotError> {
     if salt_bytes.len() < 16 {
-        return Err(WotError::MalformedSdJwt("Salt must be at least 16 bytes".to_string()));
+        return Err(WotError::MalformedSdJwt(
+            "Salt must be at least 16 bytes".to_string(),
+        ));
     }
     let salt_b64 = URL_SAFE_NO_PAD.encode(salt_bytes);
     let json_str = format!(
@@ -142,7 +144,9 @@ pub fn create_and_sign_sd_jwt<S: WotSigner>(
     }
 
     if contacts.len() > MAX_SD_ENTRIES {
-        return Err(WotError::LimitExceeded("Too many contacts for SD-JWT".to_string()));
+        return Err(WotError::LimitExceeded(
+            "Too many contacts for SD-JWT".to_string(),
+        ));
     }
 
     let mut disclosures = BTreeMap::new();
@@ -155,7 +159,9 @@ pub fn create_and_sign_sd_jwt<S: WotSigner>(
             return Err(WotError::SelfTrustForbidden);
         }
         if !seen_targets.insert(canonical_target.clone()) {
-            return Err(WotError::MalformedSdJwt("Duplicate target DID in contacts".to_string()));
+            return Err(WotError::MalformedSdJwt(
+                "Duplicate target DID in contacts".to_string(),
+            ));
         }
         if *level > 3 {
             return Err(WotError::InvalidTrustLevel(*level));
@@ -167,7 +173,8 @@ pub fn create_and_sign_sd_jwt<S: WotSigner>(
         let mut salt_bytes = [0u8; 16];
         OsRng.fill_bytes(&mut salt_bytes);
 
-        let (raw_b64, digest) = encode_disclosure(&salt_bytes, &canonical_target, *level, *contact_max_hops)?;
+        let (raw_b64, digest) =
+            encode_disclosure(&salt_bytes, &canonical_target, *level, *contact_max_hops)?;
         sd_digests.push(digest.clone());
         disclosures.insert(
             digest,
@@ -246,7 +253,9 @@ pub fn create_and_sign_sd_jwt<S: WotSigner>(
 /// Parses and cryptographically verifies an incoming SD-JWT wire string.
 pub fn parse_and_verify_sd_jwt(raw: &str, now_secs: u64) -> Result<(Did, StoredSdJwt), WotError> {
     if raw.len() > MAX_SD_JWT_RAW_LEN {
-        return Err(WotError::LimitExceeded("SD-JWT raw length exceeded".to_string()));
+        return Err(WotError::LimitExceeded(
+            "SD-JWT raw length exceeded".to_string(),
+        ));
     }
 
     let parts: Vec<&str> = raw.split('~').collect();
@@ -257,7 +266,9 @@ pub fn parse_and_verify_sd_jwt(raw: &str, now_secs: u64) -> Result<(Did, StoredS
     let jws_compact = parts[0];
     let jws_parts: Vec<&str> = jws_compact.split('.').collect();
     if jws_parts.len() != 3 {
-        return Err(WotError::MalformedSdJwt("Invalid JWS compact structure".to_string()));
+        return Err(WotError::MalformedSdJwt(
+            "Invalid JWS compact structure".to_string(),
+        ));
     }
 
     let header_bytes = URL_SAFE_NO_PAD
@@ -267,7 +278,9 @@ pub fn parse_and_verify_sd_jwt(raw: &str, now_secs: u64) -> Result<(Did, StoredS
         .map_err(|e| WotError::MalformedSdJwt(format!("Header JSON error: {e}")))?;
 
     if header.alg != SD_JWT_ALG || header.typ != SD_JWT_TYP {
-        return Err(WotError::MalformedSdJwt("Unsupported alg or typ".to_string()));
+        return Err(WotError::MalformedSdJwt(
+            "Unsupported alg or typ".to_string(),
+        ));
     }
 
     let payload_bytes = URL_SAFE_NO_PAD
@@ -277,13 +290,17 @@ pub fn parse_and_verify_sd_jwt(raw: &str, now_secs: u64) -> Result<(Did, StoredS
         .map_err(|e| WotError::MalformedSdJwt(format!("Payload JSON error: {e}")))?;
 
     if payload._sd.len() > MAX_SD_ENTRIES {
-        return Err(WotError::LimitExceeded("Too many entries in _sd".to_string()));
+        return Err(WotError::LimitExceeded(
+            "Too many entries in _sd".to_string(),
+        ));
     }
 
     let mut unique_sd = HashSet::with_capacity(payload._sd.len());
     for d in &payload._sd {
         if !unique_sd.insert(d.clone()) {
-            return Err(WotError::MalformedSdJwt("Duplicate digest in _sd".to_string()));
+            return Err(WotError::MalformedSdJwt(
+                "Duplicate digest in _sd".to_string(),
+            ));
         }
     }
 
@@ -307,7 +324,9 @@ pub fn parse_and_verify_sd_jwt(raw: &str, now_secs: u64) -> Result<(Did, StoredS
 
     let canonical_iss = canonicalize_did(&payload.iss)?;
     if canonical_iss != payload.iss {
-        return Err(WotError::InvalidDid("Issuer DID not in canonical form".to_string()));
+        return Err(WotError::InvalidDid(
+            "Issuer DID not in canonical form".to_string(),
+        ));
     }
 
     let vk = extract_verifying_key(&canonical_iss)?;
@@ -319,7 +338,9 @@ pub fn parse_and_verify_sd_jwt(raw: &str, now_secs: u64) -> Result<(Did, StoredS
         return Err(WotError::InvalidSignature);
     }
     let signature = ed25519_dalek::Signature::from_bytes(
-        &sig_bytes.try_into().map_err(|_| WotError::InvalidSignature)?,
+        &sig_bytes
+            .try_into()
+            .map_err(|_| WotError::InvalidSignature)?,
     );
 
     let signing_input = format!("{}.{}", jws_parts[0], jws_parts[1]);
@@ -337,16 +358,20 @@ pub fn parse_and_verify_sd_jwt(raw: &str, now_secs: u64) -> Result<(Did, StoredS
 
         let digest = compute_digest128(raw_disc);
         if !unique_sd.contains(&digest) {
-            return Err(WotError::MalformedSdJwt("Disclosure digest not present in _sd".to_string()));
+            return Err(WotError::MalformedSdJwt(
+                "Disclosure digest not present in _sd".to_string(),
+            ));
         }
 
         if disclosures.contains_key(&digest) {
-            return Err(WotError::MalformedSdJwt("Duplicate disclosure token in SD-JWT".to_string()));
+            return Err(WotError::MalformedSdJwt(
+                "Duplicate disclosure token in SD-JWT".to_string(),
+            ));
         }
 
-        let disc_bytes = URL_SAFE_NO_PAD
-            .decode(raw_disc)
-            .map_err(|e| WotError::MalformedSdJwt(format!("Disclosure base64 decode error: {e}")))?;
+        let disc_bytes = URL_SAFE_NO_PAD.decode(raw_disc).map_err(|e| {
+            WotError::MalformedSdJwt(format!("Disclosure base64 decode error: {e}"))
+        })?;
 
         let tuple: (String, String, u8, u8) = serde_json::from_slice(&disc_bytes)
             .map_err(|e| WotError::MalformedSdJwt(format!("Disclosure JSON array error: {e}")))?;
@@ -357,18 +382,24 @@ pub fn parse_and_verify_sd_jwt(raw: &str, now_secs: u64) -> Result<(Did, StoredS
             .decode(&salt_b64)
             .map_err(|e| WotError::MalformedSdJwt(format!("Salt base64 decode error: {e}")))?;
         if salt_bytes.len() < 16 {
-            return Err(WotError::MalformedSdJwt("Salt must be at least 16 bytes".to_string()));
+            return Err(WotError::MalformedSdJwt(
+                "Salt must be at least 16 bytes".to_string(),
+            ));
         }
 
         let canonical_target = canonicalize_did(&target_did)?;
         if canonical_target != target_did {
-            return Err(WotError::InvalidDid("Target DID not in canonical form".to_string()));
+            return Err(WotError::InvalidDid(
+                "Target DID not in canonical form".to_string(),
+            ));
         }
         if canonical_target == canonical_iss {
             return Err(WotError::SelfTrustForbidden);
         }
         if !seen_targets.insert(canonical_target.clone()) {
-            return Err(WotError::MalformedSdJwt("Duplicate target DID in disclosures".to_string()));
+            return Err(WotError::MalformedSdJwt(
+                "Duplicate target DID in disclosures".to_string(),
+            ));
         }
 
         if level > 3 {

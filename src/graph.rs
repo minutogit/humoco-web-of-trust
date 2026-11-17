@@ -1,7 +1,7 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
 use crate::identity::Did;
 use crate::register::OwnTrustEntry;
 use crate::sd_jwt::StoredSdJwt;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 /// Maps trust level (0..3) to edge trust probability factor.
 pub fn level_to_factor(level: u8) -> f64 {

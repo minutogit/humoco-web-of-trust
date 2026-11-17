@@ -39,6 +39,12 @@ Ein von Organisationen, Verbänden oder Kammern signiertes Dokument (`typ: "wot-
 ### 64-Bit Binary Fuse Filter (BinaryFuse64)
 Hocheffiziente, statische Filter-Datenstruktur nach Graf & Lemire mit 3-Wege-XOR-Peeling und 64-Bit-Fingerabdrücken ($\epsilon \approx 5{,}4 \times 10^{-20}$), die mathematisch jedes Key-Grinding verhindert und $O(1)$-Mitgliedschaftsabfragen ermöglicht (siehe [ADR 0008](./adr-08-dienstleister-pruefsiegel-binary-fuse.md)).
 
+### Schlüsselnachfolge-Attestierung (`KeySuccessorAttestation`)
+Dual signierte (`old_key_signature` + `new_key_signature` unter `HUMOCO_KEY_SUCCESSOR_V1`) oder im Verlustfall über `recovery_pub`/Bürgen autorisierte Nachfolge-Urkunde `old_did -> new_did`. Verhindert *Vampire Attacks* (Kaltstart ohne Attestierung bei 0 % Vertrauen) und steuert die `CardStore`-Auflösung über maximal 8 Hops (siehe [ADR 09](./adr-09-schluesselnachfolge-key-successor-attestation.md)).
+
+### Server-Sanktionsliste (`ServerOffenderList`)
+Kryptographisches Sperrregister für kompromittierte `humoco-sync`-Lock-Server auf Basis eines verifizierbaren `EquivocationProof` (zwei widersprüchliche `FirstWrite`-Quittungen auf demselben Slot), das mit optionaler `HUMOCO-LOCK-DELEGATE-V1`-Delegation sowohl `lock_pub` als auch `admin_pub` dauerhaft aus `trusted_servers` entwertet (siehe [ADR 10](./adr-10-server-sanktionsliste-server-offender-list.md)).
+
 ---
 
 ## 3. Metriken & Kalkulation

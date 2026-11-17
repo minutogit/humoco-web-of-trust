@@ -17,10 +17,7 @@ pub enum WotError {
 
     /// The signer DID does not match the expected issuer DID.
     #[error("Signer mismatch: expected {expected}, actual {actual}")]
-    SignerMismatch {
-        expected: String,
-        actual: String,
-    },
+    SignerMismatch { expected: String, actual: String },
 
     /// The SD-JWT string or structure is malformed.
     #[error("Malformed SD-JWT: {0}")]
@@ -40,17 +37,11 @@ pub enum WotError {
 
     /// A timestamp claim lies too far in the future compared to the reference time.
     #[error("Future timestamp detected: claim_secs={claim_secs}, now_secs={now_secs}")]
-    FutureTimestamp {
-        claim_secs: u64,
-        now_secs: u64,
-    },
+    FutureTimestamp { claim_secs: u64, now_secs: u64 },
 
     /// The issuer signed conflicting lists for the exact same version number.
     #[error("Equivocation detected for issuer {issuer} at version {version}")]
-    EquivocationDetected {
-        issuer: String,
-        version: u64,
-    },
+    EquivocationDetected { issuer: String, version: u64 },
 
     /// A resource or security limit was exceeded.
     #[error("Limit exceeded: {0}")]

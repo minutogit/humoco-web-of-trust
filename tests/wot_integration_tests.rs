@@ -1,17 +1,17 @@
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::SigningKey;
 use rand_core::OsRng;
 
 use humoco_wot::error::WotError;
 use humoco_wot::identity::{
-    canonicalize_did, did_from_verifying_key, extract_verifying_key, Did, Ed25519WotSigner,
-    WotSigner,
+    Did, Ed25519WotSigner, WotSigner, canonicalize_did, did_from_verifying_key,
+    extract_verifying_key,
 };
 use humoco_wot::provider_filter::create_and_sign_provider_filter;
 use humoco_wot::register::{TrustRegister, WotPolicy};
 use humoco_wot::sd_jwt::{
-    create_and_sign_sd_jwt, encode_disclosure, parse_and_verify_sd_jwt, DECOY_BUCKET_MULTIPLE,
+    DECOY_BUCKET_MULTIPLE, create_and_sign_sd_jwt, encode_disclosure, parse_and_verify_sd_jwt,
 };
 use humoco_wot::sync::WotSyncPackage;
 
@@ -149,12 +149,16 @@ fn test_02_sd_jwt_roundtrip_tampering_redaction_and_decoys() {
 
     // Distance redaction test:
     // target_distance = 1: Bob (hops 4) and Carol (hops 1) both included
-    let red_1 = stored.to_redacted_wire_string(1).expect("Redacted for hop 1");
+    let red_1 = stored
+        .to_redacted_wire_string(1)
+        .expect("Redacted for hop 1");
     let (_, ver_1) = parse_and_verify_sd_jwt(&red_1, now_secs).unwrap();
     assert_eq!(ver_1.disclosures.len(), 2);
 
     // target_distance = 2: Carol (hops 1) is redacted, only Bob remains!
-    let red_2 = stored.to_redacted_wire_string(2).expect("Redacted for hop 2");
+    let red_2 = stored
+        .to_redacted_wire_string(2)
+        .expect("Redacted for hop 2");
     let (_, ver_2) = parse_and_verify_sd_jwt(&red_2, now_secs).unwrap();
     assert_eq!(ver_2.disclosures.len(), 1);
     let remaining_target = &ver_2.disclosures.values().next().unwrap().target_did;
@@ -320,14 +324,9 @@ fn test_05_two_phase_sync_receipt_and_union_merge_delta() {
     // Phase 2: Union-Merge Delta
     // Carol creates a list at version v=50 with disclosure for Dave (contact_max_hops = 3)
     let (signer_carol, did_carol) = create_identity();
-    let (_, stored_carol_v50) = create_and_sign_sd_jwt(
-        &signer_carol,
-        50,
-        now_secs,
-        4,
-        &[(did_dave.clone(), 3, 3)],
-    )
-    .unwrap();
+    let (_, stored_carol_v50) =
+        create_and_sign_sd_jwt(&signer_carol, 50, now_secs, 4, &[(did_dave.clone(), 3, 3)])
+            .unwrap();
 
     // Alice initially receives Carol's list with completely redacted disclosures
     let wire_redacted = format!("{}~", stored_carol_v50.jws_compact);
@@ -392,8 +391,7 @@ fn test_06_sybil_bottleneck_and_cyclic_graphs() {
         sybil_signers.push(s_signer);
     }
 
-    let (wire_bob, _) =
-        create_and_sign_sd_jwt(&signer_bob, 1, now_secs, 4, &bob_contacts).unwrap();
+    let (wire_bob, _) = create_and_sign_sd_jwt(&signer_bob, 1, now_secs, 4, &bob_contacts).unwrap();
     reg.import_sync_package(
         &WotSyncPackage {
             format_version: 1,
@@ -407,14 +405,9 @@ fn test_06_sybil_bottleneck_and_cyclic_graphs() {
     // 3. Every Sybil S_i trusts Target with Level 3 (85%)
     let mut sybil_pkg_lists = Vec::new();
     for s_signer in &sybil_signers {
-        let (wire_s, _) = create_and_sign_sd_jwt(
-            s_signer,
-            1,
-            now_secs,
-            4,
-            &[(did_target.clone(), 3, 4)],
-        )
-        .unwrap();
+        let (wire_s, _) =
+            create_and_sign_sd_jwt(s_signer, 1, now_secs, 4, &[(did_target.clone(), 3, 4)])
+                .unwrap();
         sybil_pkg_lists.push(wire_s);
     }
 
@@ -472,7 +465,8 @@ fn test_06_sybil_bottleneck_and_cyclic_graphs() {
     // Add cycle: Target -> Anna
     let (signer_target, _) = create_identity();
     let (wire_cycle, _) =
-        create_and_sign_sd_jwt(&signer_target, 1, now_secs, 4, &[(did_anna.clone(), 3, 4)]).unwrap();
+        create_and_sign_sd_jwt(&signer_target, 1, now_secs, 4, &[(did_anna.clone(), 3, 4)])
+            .unwrap();
     reg.import_sync_package(
         &WotSyncPackage {
             format_version: 1,
@@ -554,8 +548,7 @@ fn test_08_island_spam_rejection_and_orphan_pruning() {
 
     let (wire_bob, _) =
         create_and_sign_sd_jwt(&signer_bob, 1, now_secs, 4, &[(did_dave.clone(), 2, 4)]).unwrap();
-    let (wire_dave, _) =
-        create_and_sign_sd_jwt(&signer_dave, 1, now_secs, 4, &[]).unwrap();
+    let (wire_dave, _) = create_and_sign_sd_jwt(&signer_dave, 1, now_secs, 4, &[]).unwrap();
 
     let valid_pkg = WotSyncPackage {
         format_version: 1,
@@ -685,14 +678,8 @@ fn test_10_equivocation_rejection_and_state_preservation() {
     reg.set_contact_trust(&did_bob, 2, 4, now_secs).unwrap();
 
     // 1. Bob creates initial valid list v=10 trusting Carol
-    let (wire_bob_orig, stored_orig) = create_and_sign_sd_jwt(
-        &signer_bob,
-        10,
-        now_secs,
-        4,
-        &[(did_carol.clone(), 2, 4)],
-    )
-    .unwrap();
+    let (wire_bob_orig, stored_orig) =
+        create_and_sign_sd_jwt(&signer_bob, 10, now_secs, 4, &[(did_carol.clone(), 2, 4)]).unwrap();
 
     let stats1 = reg
         .import_sync_package(
@@ -740,10 +727,12 @@ fn test_10_equivocation_rejection_and_state_preservation() {
     let preserved = reg.raw_list_store.get(&did_bob).unwrap();
     assert_eq!(preserved.jws_compact, stored_orig.jws_compact);
     assert_eq!(preserved.v, 10);
-    assert!(preserved
-        .disclosures
-        .values()
-        .any(|d| d.target_did == did_carol));
+    assert!(
+        preserved
+            .disclosures
+            .values()
+            .any(|d| d.target_did == did_carol)
+    );
 }
 
 #[test]
@@ -757,14 +746,9 @@ fn test_11_direct_sender_signature_verification_and_level_zero_transit_rejection
 
     // 1. Direct sender spoofing test:
     // Create an SD-JWT purporting to be from Bob, but with tampered signature
-    let (wire_bob, _) = create_and_sign_sd_jwt(
-        &signer_bob,
-        1,
-        now_secs,
-        4,
-        &[(did_charlie.clone(), 3, 4)],
-    )
-    .unwrap();
+    let (wire_bob, _) =
+        create_and_sign_sd_jwt(&signer_bob, 1, now_secs, 4, &[(did_charlie.clone(), 3, 4)])
+            .unwrap();
     let mut tampered_wire = wire_bob;
     // Corrupt signature part
     tampered_wire.replace_range(10..15, "XXXXX");
@@ -784,16 +768,10 @@ fn test_11_direct_sender_signature_verification_and_level_zero_transit_rejection
     // Me trusts Bob with Level 0 (existence only, gamma = 0.0)
     reg.set_contact_trust(&did_bob, 0, 4, now_secs).unwrap();
 
-    let (valid_wire_bob, _) = create_and_sign_sd_jwt(
-        &signer_bob,
-        1,
-        now_secs,
-        4,
-        &[(did_charlie.clone(), 3, 4)],
-    )
-    .unwrap();
-    let (wire_charlie, _) =
-        create_and_sign_sd_jwt(&signer_charlie, 1, now_secs, 4, &[]).unwrap();
+    let (valid_wire_bob, _) =
+        create_and_sign_sd_jwt(&signer_bob, 1, now_secs, 4, &[(did_charlie.clone(), 3, 4)])
+            .unwrap();
+    let (wire_charlie, _) = create_and_sign_sd_jwt(&signer_charlie, 1, now_secs, 4, &[]).unwrap();
 
     // Bob's list is admitted (because Bob is direct contact), but Charlie's list must be rejected
     // because Bob's Level 0 edge CANNOT serve as a transit bridge in EgoGraphCache!
@@ -865,14 +843,8 @@ fn test_12_evaluate_voucher_edge_cases_and_oldest_iat() {
     let iat_bob = 1_700_000_100;
     reg.set_contact_trust(&did_bob, 2, 4, now_secs).unwrap(); // Direct edge updated_at = now_secs
 
-    let (wire_bob, _) = create_and_sign_sd_jwt(
-        &signer_bob,
-        1,
-        iat_bob,
-        4,
-        &[(did_carol.clone(), 3, 4)],
-    )
-    .unwrap();
+    let (wire_bob, _) =
+        create_and_sign_sd_jwt(&signer_bob, 1, iat_bob, 4, &[(did_carol.clone(), 3, 4)]).unwrap();
     reg.import_sync_package(
         &WotSyncPackage {
             format_version: 1,
@@ -1016,14 +988,8 @@ fn test_14_third_party_sync_export_guard() {
     reg_alice.sign_own_list(&signer_alice, now_secs).unwrap();
 
     // 2. Bob creates a signed trust list that includes Frank and Alice imports it into raw_list_store
-    let (wire_bob, _) = create_and_sign_sd_jwt(
-        &signer_bob,
-        1,
-        now_secs,
-        4,
-        &[(did_frank.clone(), 2, 4)],
-    )
-    .unwrap();
+    let (wire_bob, _) =
+        create_and_sign_sd_jwt(&signer_bob, 1, now_secs, 4, &[(did_frank.clone(), 2, 4)]).unwrap();
 
     let stats = reg_alice
         .import_sync_package(
@@ -1040,9 +1006,7 @@ fn test_14_third_party_sync_export_guard() {
 
     // 3. Case A: Untargeted export (recipient_did = None)
     // Includes Alice's own list AND Bob's reachable third-party list
-    let (pkg_none, receipt_none) = reg_alice
-        .prepare_sync_package(None, None, false)
-        .unwrap();
+    let (pkg_none, receipt_none) = reg_alice.prepare_sync_package(None, None, false).unwrap();
     assert_eq!(
         pkg_none.lists.len(),
         2,
@@ -1174,7 +1138,7 @@ fn test_15_evaluate_voucher_for_observer() {
         obs_list_iat,
         4,
         &[
-            (did_creator.clone(), 2, 4),   // 60% direct trust from Observer to Creator
+            (did_creator.clone(), 2, 4), // 60% direct trust from Observer to Creator
             (did_guarantor.clone(), 3, 4), // 85% trust from Observer to Guarantor
         ],
     )
@@ -1261,9 +1225,18 @@ fn test_16_global_hop_management_and_guarantor_bridge_retention() {
     assert_eq!(reg.policy.own_list_max_hops, 2);
 
     // Reject invalid hops (0 and > 3)
-    assert!(matches!(reg.set_own_list_max_hops(0, now_secs + 10), Err(WotError::InvalidHopLimit(0))));
-    assert!(matches!(reg.set_own_list_max_hops(4, now_secs + 10), Err(WotError::InvalidHopLimit(4))));
-    assert!(matches!(reg.set_own_list_max_hops(9, now_secs + 10), Err(WotError::InvalidHopLimit(9))));
+    assert!(matches!(
+        reg.set_own_list_max_hops(0, now_secs + 10),
+        Err(WotError::InvalidHopLimit(0))
+    ));
+    assert!(matches!(
+        reg.set_own_list_max_hops(4, now_secs + 10),
+        Err(WotError::InvalidHopLimit(4))
+    ));
+    assert!(matches!(
+        reg.set_own_list_max_hops(9, now_secs + 10),
+        Err(WotError::InvalidHopLimit(9))
+    ));
 
     // Accept up to 3 hops
     reg.set_own_list_max_hops(3, now_secs + 10).unwrap();
@@ -1273,7 +1246,10 @@ fn test_16_global_hop_management_and_guarantor_bridge_retention() {
     reg.set_own_list_max_hops(1, now_secs + 10).unwrap();
     assert_eq!(reg.policy.own_list_max_hops, 1);
     assert_eq!(reg.own_contacts.get(&did_bob).unwrap().desired_hops, 1);
-    assert_eq!(reg.own_contacts.get(&did_bob).unwrap().updated_at, now_secs + 10);
+    assert_eq!(
+        reg.own_contacts.get(&did_bob).unwrap().updated_at,
+        now_secs + 10
+    );
     // Level 0 contact was not modified
     assert_eq!(reg.own_contacts.get(&did_carol).unwrap().desired_hops, 4);
     assert!(reg.own_list_dirty);
@@ -1313,33 +1289,72 @@ fn test_17_age_decay_grace_period_and_half_life() {
 
     // Case 1: Bob's list iat is 364 days ago (within 1-year grace period)
     let iat_fresh = now_secs - (one_year - 86400);
-    let (wire_fresh, _) = create_and_sign_sd_jwt(&signer_bob, 1, iat_fresh, 4, &[(did_carol.clone(), 3, 4)]).unwrap();
+    let (wire_fresh, _) =
+        create_and_sign_sd_jwt(&signer_bob, 1, iat_fresh, 4, &[(did_carol.clone(), 3, 4)]).unwrap();
     reg.raw_list_store.clear();
-    reg.import_sync_package(&WotSyncPackage { format_version: 1, lists: vec![wire_fresh] }, Some(&did_bob), now_secs).unwrap();
+    reg.import_sync_package(
+        &WotSyncPackage {
+            format_version: 1,
+            lists: vec![wire_fresh],
+        },
+        Some(&did_bob),
+        now_secs,
+    )
+    .unwrap();
 
     let eval_fresh = reg.evaluate_did(&did_carol, Some(now_secs)).unwrap();
     let full_strength = 0.85 * 0.85;
-    assert!((eval_fresh.score - full_strength).abs() < 1e-4, "Expected full strength, got {}", eval_fresh.score);
+    assert!(
+        (eval_fresh.score - full_strength).abs() < 1e-4,
+        "Expected full strength, got {}",
+        eval_fresh.score
+    );
 
     // Case 2: Bob's list iat is 2 years ago (1 year grace + 1 year half-life -> 50% decay)
     let iat_2yr = now_secs - (2 * one_year);
-    let (wire_2yr, _) = create_and_sign_sd_jwt(&signer_bob, 2, iat_2yr, 4, &[(did_carol.clone(), 3, 4)]).unwrap();
+    let (wire_2yr, _) =
+        create_and_sign_sd_jwt(&signer_bob, 2, iat_2yr, 4, &[(did_carol.clone(), 3, 4)]).unwrap();
     reg.raw_list_store.clear();
-    reg.import_sync_package(&WotSyncPackage { format_version: 1, lists: vec![wire_2yr] }, Some(&did_bob), now_secs).unwrap();
+    reg.import_sync_package(
+        &WotSyncPackage {
+            format_version: 1,
+            lists: vec![wire_2yr],
+        },
+        Some(&did_bob),
+        now_secs,
+    )
+    .unwrap();
 
     let eval_2yr = reg.evaluate_did(&did_carol, Some(now_secs)).unwrap();
     let half_strength = full_strength * 0.5;
-    assert!((eval_2yr.score - half_strength).abs() < 1e-4, "Expected half strength, got {}", eval_2yr.score);
+    assert!(
+        (eval_2yr.score - half_strength).abs() < 1e-4,
+        "Expected half strength, got {}",
+        eval_2yr.score
+    );
 
     // Case 3: Bob's list iat is 3 years ago (1 year grace + 2 years half-life -> 25% decay)
     let iat_3yr = now_secs - (3 * one_year);
-    let (wire_3yr, _) = create_and_sign_sd_jwt(&signer_bob, 3, iat_3yr, 4, &[(did_carol.clone(), 3, 4)]).unwrap();
+    let (wire_3yr, _) =
+        create_and_sign_sd_jwt(&signer_bob, 3, iat_3yr, 4, &[(did_carol.clone(), 3, 4)]).unwrap();
     reg.raw_list_store.clear();
-    reg.import_sync_package(&WotSyncPackage { format_version: 1, lists: vec![wire_3yr] }, Some(&did_bob), now_secs).unwrap();
+    reg.import_sync_package(
+        &WotSyncPackage {
+            format_version: 1,
+            lists: vec![wire_3yr],
+        },
+        Some(&did_bob),
+        now_secs,
+    )
+    .unwrap();
 
     let eval_3yr = reg.evaluate_did(&did_carol, Some(now_secs)).unwrap();
     let quarter_strength = full_strength * 0.25;
-    assert!((eval_3yr.score - quarter_strength).abs() < 1e-4, "Expected quarter strength, got {}", eval_3yr.score);
+    assert!(
+        (eval_3yr.score - quarter_strength).abs() < 1e-4,
+        "Expected quarter strength, got {}",
+        eval_3yr.score
+    );
 }
 
 #[test]
@@ -1370,7 +1385,8 @@ fn test_18_sync_package_size_limit_continue_behavior() {
         let (_, dummy) = create_identity();
         large_contacts.push((dummy, 1, 4));
     }
-    let (wire_large, _) = create_and_sign_sd_jwt(&signer_large, 1, now_secs, 4, &large_contacts).unwrap();
+    let (wire_large, _) =
+        create_and_sign_sd_jwt(&signer_large, 1, now_secs, 4, &large_contacts).unwrap();
 
     // Small list: minimal empty list
     let (wire_small, _) = create_and_sign_sd_jwt(&signer_small, 1, now_secs, 4, &[]).unwrap();
@@ -1386,19 +1402,32 @@ fn test_18_sync_package_size_limit_continue_behavior() {
     .unwrap();
 
     // Set max_bytes such that Alice's own list + Small list fit, but Large list does NOT fit!
-    let own_wire = reg.own_signed_list.as_ref().unwrap().to_redacted_wire_string(1).unwrap();
+    let own_wire = reg
+        .own_signed_list
+        .as_ref()
+        .unwrap()
+        .to_redacted_wire_string(1)
+        .unwrap();
     let base_len = 31;
     let own_len = own_wire.len() + 2;
     let small_len = wire_small.len() + 3;
     let tight_limit = base_len + own_len + small_len + 10;
 
-    let (pkg, receipt) = reg.prepare_sync_package(Some(&did_dave), Some(tight_limit), true).unwrap();
+    let (pkg, receipt) = reg
+        .prepare_sync_package(Some(&did_dave), Some(tight_limit), true)
+        .unwrap();
 
     // Verify Large list was evaluated first and skipped, but Small list was still included via continue!
     let issuers: Vec<Did> = receipt.entries.into_iter().map(|e| e.issuer_did).collect();
     assert!(issuers.contains(&did_me), "Own list must be included");
-    assert!(issuers.contains(&did_small), "Small list must be included via continue");
-    assert!(!issuers.contains(&did_large), "Large list must have been skipped due to size limit");
+    assert!(
+        issuers.contains(&did_small),
+        "Small list must be included via continue"
+    );
+    assert!(
+        !issuers.contains(&did_large),
+        "Large list must have been skipped due to size limit"
+    );
     assert_eq!(pkg.lists.len(), 2);
 }
 
@@ -1414,10 +1443,7 @@ fn test_19_provider_filter_integration_and_voucher_evaluation() {
 
     // 1. Create and sign provider filter:
     // Provider certifies Creator at Level 3 (85%) and Guarantor at Level 2 (60%)
-    let members = vec![
-        (did_creator.clone(), 3),
-        (did_guarantor.clone(), 2),
-    ];
+    let members = vec![(did_creator.clone(), 3), (did_guarantor.clone(), 2)];
     let filter_v1 = create_and_sign_provider_filter(
         &signer_prov,
         "Regional Handwerker Verband",
@@ -1429,11 +1455,15 @@ fn test_19_provider_filter_integration_and_voucher_evaluation() {
     .expect("create provider filter");
 
     // Import provider filter into TrustRegister
-    let imported_did = reg.import_provider_filter(&filter_v1, now_secs).expect("import filter");
+    let imported_did = reg
+        .import_provider_filter(&filter_v1, now_secs)
+        .expect("import filter");
     assert_eq!(imported_did, did_prov);
 
     // Verify local_trust_level is initially 0 -> evaluation should not use it yet
-    let eval_untrusted = reg.evaluate_voucher(&did_creator, &[], false, Some(now_secs)).unwrap();
+    let eval_untrusted = reg
+        .evaluate_voucher(&did_creator, &[], false, Some(now_secs))
+        .unwrap();
     assert_eq!(eval_untrusted.score, 0.0);
 
     // Set local trust level for provider to Level 2 (60%)
@@ -1442,7 +1472,9 @@ fn test_19_provider_filter_integration_and_voucher_evaluation() {
     // Evaluation 1: Creator match in provider filter
     // Path: Me -(60% Level 2)-> Provider -(85% Level 3)-> Creator
     // Score: 0.60 * 0.85 = 0.51, Hops = 2
-    let eval_creator = reg.evaluate_voucher(&did_creator, &[], false, Some(now_secs)).unwrap();
+    let eval_creator = reg
+        .evaluate_voucher(&did_creator, &[], false, Some(now_secs))
+        .unwrap();
     assert_eq!(eval_creator.shortest_hops, Some(2));
     let expected_creator_score = 0.60 * 0.85;
     assert!((eval_creator.score - expected_creator_score).abs() < 1e-4);
@@ -1453,7 +1485,12 @@ fn test_19_provider_filter_integration_and_voucher_evaluation() {
     // Path: Me -(60% Level 2)-> Provider -(60% Level 2)-> Guarantor -(85% gw)-> UnknownCreator
     // Score: 0.60 * 0.60 * 0.85 = 0.306, Hops = 3
     let eval_guar = reg
-        .evaluate_voucher(&did_unknown_creator, &[&did_guarantor], false, Some(now_secs))
+        .evaluate_voucher(
+            &did_unknown_creator,
+            &[&did_guarantor],
+            false,
+            Some(now_secs),
+        )
         .unwrap();
     assert_eq!(eval_guar.shortest_hops, Some(3));
     let expected_guar_score = 0.60 * 0.60 * 0.85;
@@ -1504,7 +1541,13 @@ fn test_19_provider_filter_integration_and_voucher_evaluation() {
     )
     .unwrap();
     reg.import_provider_filter(&filter_v_new, now_secs).unwrap();
-    assert_eq!(reg.provider_filters.get(&did_prov).unwrap().local_trust_level, 1);
+    assert_eq!(
+        reg.provider_filters
+            .get(&did_prov)
+            .unwrap()
+            .local_trust_level,
+        1
+    );
 
     // 5. Equivocation rejection: same version v=11 with different members
     let (_, did_other) = create_identity();
@@ -1541,9 +1584,13 @@ fn test_20_drop_subpackages_selective_disclosure_and_signature_integrity() {
     reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
 
     // Alice sets trust for Bob: level 2, desired_hops 1
-    reg_alice.set_contact_trust(&did_bob, 2, 1, now_secs).unwrap();
+    reg_alice
+        .set_contact_trust(&did_bob, 2, 1, now_secs)
+        .unwrap();
     // Alice sets trust for Carol: level 2, desired_hops 3
-    reg_alice.set_contact_trust(&did_carol, 2, 3, now_secs).unwrap();
+    reg_alice
+        .set_contact_trust(&did_carol, 2, 3, now_secs)
+        .unwrap();
 
     // Carol provides a forwardable list with max_hops = 3 to satisfy Tit-for-Tat
     let (carol_wire, _) = create_and_sign_sd_jwt(
@@ -1607,8 +1654,18 @@ fn test_20_drop_subpackages_selective_disclosure_and_signature_integrity() {
     assert!(alice_list_c1.contains(&bob_disc.raw_b64));
     assert!(alice_list_c1.contains(&carol_disc.raw_b64));
     let (_, parsed_c1) = parse_and_verify_sd_jwt(alice_list_c1, now_secs).unwrap();
-    assert!(parsed_c1.disclosures.values().any(|d| d.target_did == did_bob));
-    assert!(parsed_c1.disclosures.values().any(|d| d.target_did == did_carol));
+    assert!(
+        parsed_c1
+            .disclosures
+            .values()
+            .any(|d| d.target_did == did_bob)
+    );
+    assert!(
+        parsed_c1
+            .disclosures
+            .values()
+            .any(|d| d.target_did == did_carol)
+    );
 
     // Class 2 (c=2): Dave
     let sub_c2 = &subpackages[1];
@@ -1626,8 +1683,18 @@ fn test_20_drop_subpackages_selective_disclosure_and_signature_integrity() {
         "Carol disclosure must remain at distance 2"
     );
     let (_, parsed_c2) = parse_and_verify_sd_jwt(alice_list_c2, now_secs).unwrap();
-    assert!(!parsed_c2.disclosures.values().any(|d| d.target_did == did_bob));
-    assert!(parsed_c2.disclosures.values().any(|d| d.target_did == did_carol));
+    assert!(
+        !parsed_c2
+            .disclosures
+            .values()
+            .any(|d| d.target_did == did_bob)
+    );
+    assert!(
+        parsed_c2
+            .disclosures
+            .values()
+            .any(|d| d.target_did == did_carol)
+    );
 
     // Class 3 (c=3): Eve
     let sub_c3 = &subpackages[2];
@@ -1643,8 +1710,18 @@ fn test_20_drop_subpackages_selective_disclosure_and_signature_integrity() {
         "Carol must remain disclosed at distance 3"
     );
     let (_, parsed_c3) = parse_and_verify_sd_jwt(alice_list_c3, now_secs).unwrap();
-    assert!(!parsed_c3.disclosures.values().any(|d| d.target_did == did_bob));
-    assert!(parsed_c3.disclosures.values().any(|d| d.target_did == did_carol));
+    assert!(
+        !parsed_c3
+            .disclosures
+            .values()
+            .any(|d| d.target_did == did_bob)
+    );
+    assert!(
+        parsed_c3
+            .disclosures
+            .values()
+            .any(|d| d.target_did == did_carol)
+    );
 
     // Cryptographic signature integrity: Verify that both Class 1 and Class 2 packages
     // are accepted by import_sync_package with zero crypto rejection!
@@ -1679,7 +1756,9 @@ fn test_21_drop_sent_log_transport_binding_idempotency_and_delta() {
     let now_secs = 1_700_000_000;
     let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
     reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
-    reg_alice.set_contact_trust(&did_bob, 2, 2, now_secs).unwrap();
+    reg_alice
+        .set_contact_trust(&did_bob, 2, 2, now_secs)
+        .unwrap();
     reg_alice.sign_own_list(&signer_alice, now_secs).unwrap();
 
     let transport_id = "https://drop.humoco.org/alice/wot.bin";
@@ -1696,7 +1775,11 @@ fn test_21_drop_sent_log_transport_binding_idempotency_and_delta() {
     reg_alice.commit_drop_sync_receipt(receipt.clone(), now_secs);
     assert!(reg_alice.drop_sent_log.contains_key(transport_id));
     assert_eq!(
-        reg_alice.drop_sent_log.get(transport_id).unwrap().readers_fingerprint,
+        reg_alice
+            .drop_sent_log
+            .get(transport_id)
+            .unwrap()
+            .readers_fingerprint,
         receipt.readers_fingerprint
     );
 
@@ -1710,13 +1793,19 @@ fn test_21_drop_sent_log_transport_binding_idempotency_and_delta() {
     let prep_force = reg_alice
         .prepare_drop_sync_subpackages(transport_id, None, None, true)
         .unwrap();
-    assert!(prep_force.is_some(), "force_full=true must bypass drop_sent_log delta check");
+    assert!(
+        prep_force.is_some(),
+        "force_full=true must bypass drop_sent_log delta check"
+    );
 
     // 5. Different transport ID: not committed yet
     let prep_other_transport = reg_alice
         .prepare_drop_sync_subpackages("https://other-drop.com/alice/wot.bin", None, None, false)
         .unwrap();
-    assert!(prep_other_transport.is_some(), "Uncommitted transport ID must return Some");
+    assert!(
+        prep_other_transport.is_some(),
+        "Uncommitted transport ID must return Some"
+    );
 
     // 6. Changing reader list triggers Ok(Some)
     let prep_custom = reg_alice
@@ -1727,15 +1816,25 @@ fn test_21_drop_sent_log_transport_binding_idempotency_and_delta() {
             false,
         )
         .unwrap();
-    assert!(prep_custom.is_some(), "Altered readers fingerprint must trigger Ok(Some)");
+    assert!(
+        prep_custom.is_some(),
+        "Altered readers fingerprint must trigger Ok(Some)"
+    );
 
     // 7. Changing own list version triggers Ok(Some)
-    reg_alice.set_contact_trust(&did_carol, 1, 2, now_secs + 10).unwrap();
-    reg_alice.sign_own_list(&signer_alice, now_secs + 10).unwrap();
+    reg_alice
+        .set_contact_trust(&did_carol, 1, 2, now_secs + 10)
+        .unwrap();
+    reg_alice
+        .sign_own_list(&signer_alice, now_secs + 10)
+        .unwrap();
     let prep_version_bump = reg_alice
         .prepare_drop_sync_subpackages(transport_id, None, None, false)
         .unwrap();
-    assert!(prep_version_bump.is_some(), "Updated trust list version must trigger Ok(Some)");
+    assert!(
+        prep_version_bump.is_some(),
+        "Updated trust list version must trigger Ok(Some)"
+    );
 
     // 8. Test clear_drop_sent_log
     let receipt_new = prep_version_bump.unwrap().1;
@@ -1748,7 +1847,10 @@ fn test_21_drop_sent_log_transport_binding_idempotency_and_delta() {
     let prep_after_clear = reg_alice
         .prepare_drop_sync_subpackages(transport_id, None, None, false)
         .unwrap();
-    assert!(prep_after_clear.is_some(), "Must re-prepare after clearing transport sent log");
+    assert!(
+        prep_after_clear.is_some(),
+        "Must re-prepare after clearing transport sent log"
+    );
 
     // Clear all
     reg_alice.commit_drop_sync_receipt(prep_after_clear.unwrap().1, now_secs + 20);
@@ -1764,7 +1866,9 @@ fn test_22_drop_sync_isolation_from_1_to_1_sent_log() {
     let now_secs = 1_700_000_000;
     let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
     reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
-    reg_alice.set_contact_trust(&did_bob, 2, 2, now_secs).unwrap();
+    reg_alice
+        .set_contact_trust(&did_bob, 2, 2, now_secs)
+        .unwrap();
     reg_alice.sign_own_list(&signer_alice, now_secs).unwrap();
 
     // Prepare and commit drop sync receipt
@@ -1802,7 +1906,11 @@ fn test_22_drop_sync_isolation_from_1_to_1_sent_log() {
     assert!(pkg_1to1_empty.lists.is_empty());
 
     // Drop sent log is still intact and unaffected by 1:1 sync commit
-    assert!(reg_alice.drop_sent_log.contains_key("https://drop.example.org/alice.wot"));
+    assert!(
+        reg_alice
+            .drop_sent_log
+            .contains_key("https://drop.example.org/alice.wot")
+    );
 }
 
 #[test]
@@ -1818,9 +1926,13 @@ fn test_23_authorized_drop_readers_multi_hop_and_level_zero_exclusion() {
     reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
 
     // Alice adds Bob at Level 2 (30%/60%) -> Hop 1
-    reg_alice.set_contact_trust(&did_bob, 2, 3, now_secs).unwrap();
+    reg_alice
+        .set_contact_trust(&did_bob, 2, 3, now_secs)
+        .unwrap();
     // Alice adds Charlie at Level 0 (F2F existence only)
-    reg_alice.set_contact_trust(&did_charlie, 0, 1, now_secs).unwrap();
+    reg_alice
+        .set_contact_trust(&did_charlie, 0, 1, now_secs)
+        .unwrap();
 
     // 1. Check authorized readers with only direct contacts
     let readers_1 = reg_alice.authorized_drop_readers();
@@ -1892,7 +2004,9 @@ fn test_23_authorized_drop_readers_multi_hop_and_level_zero_exclusion() {
     // 5. Explicit Level-0 veto: if Alice adds Dave directly as Level 0,
     // Dave MUST be excluded even if reachable via third-party lists!
     reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
-    reg_alice.set_contact_trust(&did_dave, 0, 1, now_secs).unwrap();
+    reg_alice
+        .set_contact_trust(&did_dave, 0, 1, now_secs)
+        .unwrap();
     let readers_with_veto = reg_alice.authorized_drop_readers();
     assert!(
         !readers_with_veto.iter().any(|(d, _)| d == &did_dave),
@@ -1905,7 +2019,10 @@ fn test_23_authorized_drop_readers_multi_hop_and_level_zero_exclusion() {
     let mut reversed = readers_capped.clone();
     reversed.reverse();
     let fp2 = humoco_wot::sync::compute_readers_fingerprint(&reversed);
-    assert_eq!(fp1, fp2, "Fingerprint must be order-invariant (sorted internally)");
+    assert_eq!(
+        fp1, fp2,
+        "Fingerprint must be order-invariant (sorted internally)"
+    );
     assert_ne!(fp1, 0);
 
     // Empty reader list fingerprint is 0
@@ -1931,9 +2048,15 @@ fn test_24_drop_sync_freshness_prioritization_under_byte_cap() {
     let now_secs = 1_700_000_000;
     let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
     reg_alice.set_own_list_max_hops(3, now_secs).unwrap();
-    reg_alice.set_contact_trust(&did_older, 2, 3, now_secs).unwrap();
-    reg_alice.set_contact_trust(&did_newer, 2, 3, now_secs).unwrap();
-    reg_alice.ensure_own_list_signed(&signer_alice, now_secs).unwrap();
+    reg_alice
+        .set_contact_trust(&did_older, 2, 3, now_secs)
+        .unwrap();
+    reg_alice
+        .set_contact_trust(&did_newer, 2, 3, now_secs)
+        .unwrap();
+    reg_alice
+        .ensure_own_list_signed(&signer_alice, now_secs)
+        .unwrap();
 
     let (older_wire, _) = create_and_sign_sd_jwt(
         &signer_older,
@@ -1956,7 +2079,9 @@ fn test_24_drop_sync_freshness_prioritization_under_byte_cap() {
         format_version: 1,
         lists: vec![older_wire, newer_wire],
     };
-    reg_alice.import_sync_package(&pkg_in, None, now_secs).unwrap();
+    reg_alice
+        .import_sync_package(&pkg_in, None, now_secs)
+        .unwrap();
 
     // Measure un-capped Hop-1 package: [own (dist=0), newer (dist=1), older (dist=1)]
     let (full_subs, _) = reg_alice
@@ -1993,8 +2118,12 @@ fn test_25_import_discards_under_redacted_disclosures_for_multi_hop() {
 
     let now_secs = 1_700_000_000;
     let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
-    reg_alice.set_contact_trust(&did_bob, 2, 3, now_secs).unwrap();
-    reg_alice.ensure_own_list_signed(&signer_alice, now_secs).unwrap();
+    reg_alice
+        .set_contact_trust(&did_bob, 2, 3, now_secs)
+        .unwrap();
+    reg_alice
+        .ensure_own_list_signed(&signer_alice, now_secs)
+        .unwrap();
 
     // Bob (Hop 1) lists Carol (becomes Hop 2) with contact_max_hops = 3
     let (bob_wire, _) = create_and_sign_sd_jwt(
@@ -2039,12 +2168,294 @@ fn test_25_import_discards_under_redacted_disclosures_for_multi_hop() {
     assert_eq!(kept_record.contact_max_hops, 2);
 
     assert!(
-        reg_alice.evaluate_did(&did_eve, Some(now_secs)).unwrap().score > 0.0,
+        reg_alice
+            .evaluate_did(&did_eve, Some(now_secs))
+            .unwrap()
+            .score
+            > 0.0,
         "Properly permitted contact_max_hops=2 disclosure (Eve) remains usable"
     );
     assert_eq!(
-        reg_alice.evaluate_did(&did_dave, Some(now_secs)).unwrap().score,
+        reg_alice
+            .evaluate_did(&did_dave, Some(now_secs))
+            .unwrap()
+            .score,
         0.0,
         "Under-redacted disclosure (Dave, contact_max_hops=1) must not contribute to trust graph"
     );
+}
+
+#[test]
+fn test_26_key_successor_attestation_and_chain_resolution() {
+    use humoco_wot::{
+        KeyRotationReason, KeySuccessorAttestation, MAX_SUCCESSOR_CHAIN_LEN,
+        resolve_successor_chain,
+    };
+
+    let (signer_a, did_a) = create_identity();
+    let (signer_b, _did_b) = create_identity();
+    let (signer_c, did_c) = create_identity();
+    let now_secs = 1_795_000_000u64;
+    let mig_pub_b = [0x42u8; 32];
+    let mig_vk_b = SigningKey::from_bytes(&mig_pub_b)
+        .verifying_key()
+        .to_bytes();
+
+    // 1. Dual-signed attestation + JSON roundtrip + verification
+    let att_ab = KeySuccessorAttestation::sign_dual(
+        &signer_a,
+        &signer_b,
+        KeyRotationReason::DeviceMigration,
+        Some(mig_vk_b),
+        now_secs,
+    )
+    .expect("dual-signed attestation");
+    att_ab
+        .verify(now_secs)
+        .expect("valid attestation must verify");
+
+    let json = serde_json::to_string(&att_ab).unwrap();
+    let decoded: KeySuccessorAttestation = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, att_ab);
+    decoded.verify(now_secs).unwrap();
+
+    // 2. Forged signature / tampered payload rejection
+    let mut forged_old = att_ab.clone();
+    forged_old.old_key_signature[0] ^= 0xFF;
+    assert_eq!(forged_old.verify(now_secs), Err(WotError::InvalidSignature));
+
+    let mut forged_new = att_ab.clone();
+    forged_new.new_key_signature[0] ^= 0xFF;
+    assert_eq!(forged_new.verify(now_secs), Err(WotError::InvalidSignature));
+
+    let mut wrong_mig = att_ab.clone();
+    wrong_mig.new_creator_mig_pub = None;
+    assert_eq!(wrong_mig.verify(now_secs), Err(WotError::InvalidSignature));
+
+    // Self-rotation forbidden
+    assert_eq!(
+        KeySuccessorAttestation::sign_dual(
+            &signer_a,
+            &signer_a,
+            KeyRotationReason::Routine,
+            None,
+            now_secs
+        ),
+        Err(WotError::SelfTrustForbidden)
+    );
+
+    // Future timestamp beyond MAX_CLOCK_SKEW_SECS (86_400s) rejected
+    assert!(matches!(
+        att_ab.verify(now_secs - 86_401),
+        Err(WotError::FutureTimestamp { .. })
+    ));
+
+    // 3. Multi-hop chain resolution A -> B -> C (with an invalid forged distraction ignored)
+    let att_bc = KeySuccessorAttestation::sign_dual(
+        &signer_b,
+        &signer_c,
+        KeyRotationReason::Routine,
+        None,
+        now_secs + 10,
+    )
+    .unwrap();
+    let resolved = resolve_successor_chain(
+        &format!("alice:chk@{}", did_a),
+        &[forged_old, att_ab.clone(), att_bc.clone()],
+        now_secs + 10,
+    )
+    .unwrap();
+    assert_eq!(resolved, did_c);
+
+    // 4. Cycle detection C -> A -> B -> C -> LimitExceeded
+    let att_ca = KeySuccessorAttestation::sign_dual(
+        &signer_c,
+        &signer_a,
+        KeyRotationReason::Compromise,
+        None,
+        now_secs + 20,
+    )
+    .unwrap();
+    assert!(matches!(
+        resolve_successor_chain(&did_a, &[att_ab, att_bc, att_ca], now_secs + 20),
+        Err(WotError::LimitExceeded(_))
+    ));
+
+    // 5. Chain exceeding MAX_SUCCESSOR_CHAIN_LEN (9 hops > 8) -> LimitExceeded
+    let mut keys = Vec::with_capacity(MAX_SUCCESSOR_CHAIN_LEN + 2);
+    for _ in 0..=(MAX_SUCCESSOR_CHAIN_LEN + 1) {
+        keys.push(create_identity());
+    }
+    let mut long_chain = Vec::with_capacity(MAX_SUCCESSOR_CHAIN_LEN + 1);
+    for i in 0..=MAX_SUCCESSOR_CHAIN_LEN {
+        long_chain.push(
+            KeySuccessorAttestation::sign_dual(
+                &keys[i].0,
+                &keys[i + 1].0,
+                KeyRotationReason::Routine,
+                None,
+                now_secs + i as u64,
+            )
+            .unwrap(),
+        );
+    }
+    assert_eq!(
+        resolve_successor_chain(
+            &keys[0].1,
+            &long_chain[..MAX_SUCCESSOR_CHAIN_LEN],
+            now_secs + 50
+        )
+        .unwrap(),
+        keys[MAX_SUCCESSOR_CHAIN_LEN].1
+    );
+    assert!(matches!(
+        resolve_successor_chain(&keys[0].1, &long_chain, now_secs + 50),
+        Err(WotError::LimitExceeded(_))
+    ));
+}
+
+#[test]
+fn test_27_server_offender_list_equivocation_and_delegation() {
+    use ed25519_dalek::Signer;
+    use humoco_wot::{
+        ServerOffenderList, ServerOffenderRecord, WotEquivocationProof, WotLockDelegation,
+        WotLockReceipt, WotLockReceiptKind,
+    };
+
+    let admin_sk = SigningKey::generate(&mut OsRng);
+    let admin_pub = admin_sk.verifying_key().to_bytes();
+    let lock_sk = SigningKey::generate(&mut OsRng);
+    let lock_pub = lock_sk.verifying_key().to_bytes();
+    let other_sk = SigningKey::generate(&mut OsRng);
+    let other_pub = other_sk.verifying_key().to_bytes();
+
+    let now_secs = 1_795_000_000u64;
+
+    let make_signed_receipt =
+        |sk: &SigningKey, kind: WotLockReceiptKind, child_lock: [u8; 32], write_seq: u64| {
+            let mut r = WotLockReceipt {
+                kind,
+                lock_pub: sk.verifying_key().to_bytes(),
+                bucket: [0x11; 32],
+                slot: [0x22; 32],
+                child_lock,
+                entry_hash: [0x33; 32],
+                retain_until_quarter: 8060,
+                write_seq,
+                bucket_head: [0x44; 32],
+                recipient_nonce: [write_seq as u8; 32],
+                sig: [0; 64],
+            };
+            r.sig = sk.sign(&r.digest()).to_bytes();
+            r
+        };
+
+    let rec_a = make_signed_receipt(&lock_sk, WotLockReceiptKind::FirstWrite, [0xA1; 32], 1);
+    let rec_b_conflict =
+        make_signed_receipt(&lock_sk, WotLockReceiptKind::FirstWrite, [0xB2; 32], 2);
+    let rec_b_same = make_signed_receipt(&lock_sk, WotLockReceiptKind::FirstWrite, [0xA1; 32], 2);
+    let rec_b_cs = make_signed_receipt(&lock_sk, WotLockReceiptKind::ConflictSeen, [0xB2; 32], 2);
+
+    let mut del = WotLockDelegation {
+        admin_pub,
+        lock_pub,
+        issued_at: now_secs - 10,
+        sig: [0; 64],
+    };
+    del.sig = admin_sk.sign(del.canonical_message().as_bytes()).to_bytes();
+
+    let mut list = ServerOffenderList::new();
+
+    // 1. Non-conflicting (same child_lock) or ConflictSeen MUST be rejected
+    assert_eq!(
+        list.insert_verified(
+            ServerOffenderRecord {
+                proof: WotEquivocationProof {
+                    receipt_a: rec_a.clone(),
+                    receipt_b: rec_b_same,
+                },
+                delegation: None,
+                recorded_at: now_secs,
+            },
+            now_secs
+        ),
+        Err(WotError::InvalidSignature)
+    );
+    assert_eq!(
+        list.insert_verified(
+            ServerOffenderRecord {
+                proof: WotEquivocationProof {
+                    receipt_a: rec_a.clone(),
+                    receipt_b: rec_b_cs,
+                },
+                delegation: None,
+                recorded_at: now_secs,
+            },
+            now_secs
+        ),
+        Err(WotError::InvalidSignature)
+    );
+
+    // 2. Delegation for a different lock_pub or forged admin sig MUST be rejected
+    let mut wrong_del = del.clone();
+    wrong_del.lock_pub = other_pub;
+    wrong_del.sig = admin_sk
+        .sign(wrong_del.canonical_message().as_bytes())
+        .to_bytes();
+    assert!(matches!(
+        list.insert_verified(
+            ServerOffenderRecord {
+                proof: WotEquivocationProof {
+                    receipt_a: rec_a.clone(),
+                    receipt_b: rec_b_conflict.clone(),
+                },
+                delegation: Some(wrong_del),
+                recorded_at: now_secs,
+            },
+            now_secs
+        ),
+        Err(WotError::SignerMismatch { .. })
+    ));
+
+    let mut forged_del = del.clone();
+    forged_del.sig[0] ^= 0xFF;
+    assert_eq!(
+        list.insert_verified(
+            ServerOffenderRecord {
+                proof: WotEquivocationProof {
+                    receipt_a: rec_a.clone(),
+                    receipt_b: rec_b_conflict.clone(),
+                },
+                delegation: Some(forged_del),
+                recorded_at: now_secs,
+            },
+            now_secs
+        ),
+        Err(WotError::InvalidSignature)
+    );
+    assert!(!list.is_lock_pub_revoked(&lock_pub));
+    assert!(!list.is_admin_pub_revoked(&admin_pub));
+
+    // 3. Valid EquivocationProof + LockDelegation burns BOTH lock_pub & admin_pub
+    let valid_rec = ServerOffenderRecord {
+        proof: WotEquivocationProof {
+            receipt_a: rec_a,
+            receipt_b: rec_b_conflict,
+        },
+        delegation: Some(del),
+        recorded_at: now_secs,
+    };
+    let json = serde_json::to_string(&valid_rec).unwrap();
+    let decoded: ServerOffenderRecord = serde_json::from_str(&json).unwrap();
+    list.insert_verified(decoded, now_secs).unwrap();
+
+    assert!(list.is_lock_pub_revoked(&lock_pub));
+    assert!(list.is_admin_pub_revoked(&admin_pub));
+    assert!(!list.is_lock_pub_revoked(&other_pub));
+
+    let fuse = list.build_denylist_filter().unwrap();
+    assert!(ServerOffenderList::filter_contains_pubkey(&fuse, &lock_pub));
+    assert!(ServerOffenderList::filter_contains_pubkey(
+        &fuse, &admin_pub
+    ));
 }

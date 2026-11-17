@@ -1,11 +1,11 @@
-use std::collections::BTreeMap;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 use crate::error::WotError;
-use crate::identity::{canonicalize_did, Did};
+use crate::identity::{Did, canonicalize_did};
 use crate::register::TrustRegister;
 use crate::sd_jwt::parse_and_verify_sd_jwt;
 
@@ -216,7 +216,8 @@ impl TrustRegister {
                             .and_then(|log| log.get(iss))
                             .is_some_and(|sent| {
                                 sent.version > stored.v
-                                    || (sent.version == stored.v && sent.disclosure_fingerprint == fp)
+                                    || (sent.version == stored.v
+                                        && sent.disclosure_fingerprint == fp)
                             });
 
                     if !already_sent {
@@ -324,7 +325,8 @@ impl TrustRegister {
                 continue;
             }
             if let Some(&dist) = distances.get(&id)
-                && dist >= 1 && dist <= max_hops
+                && dist >= 1
+                && dist <= max_hops
             {
                 readers.push((did.clone(), dist));
             }
@@ -407,10 +409,8 @@ impl TrustRegister {
             }
             class_reader_dids.sort();
 
-            let class_reader_pairs: Vec<(Did, u8)> = class_reader_dids
-                .iter()
-                .map(|d| (d.clone(), c))
-                .collect();
+            let class_reader_pairs: Vec<(Did, u8)> =
+                class_reader_dids.iter().map(|d| (d.clone(), c)).collect();
             let class_readers_fp = compute_readers_fingerprint(&class_reader_pairs);
 
             let mut class_candidates = Vec::new();
@@ -653,7 +653,9 @@ impl TrustRegister {
                             .retain(|_, record| record.contact_max_hops >= hop_dist);
 
                         if let Some(existing) = self.raw_list_store.get_mut(&iss) {
-                            if existing.v == new_stored.v && existing.jws_compact != new_stored.jws_compact {
+                            if existing.v == new_stored.v
+                                && existing.jws_compact != new_stored.jws_compact
+                            {
                                 // Conflicting JWS bodies for identical version -> Equivocation detected!
                                 stats.rejected_crypto += 1;
                             } else if new_stored.v > existing.v {
@@ -664,7 +666,9 @@ impl TrustRegister {
                                 // Same JWS body: union-merge disclosures
                                 let mut merged = 0;
                                 for (digest, record) in new_stored.disclosures {
-                                    if let std::collections::btree_map::Entry::Vacant(e) = existing.disclosures.entry(digest) {
+                                    if let std::collections::btree_map::Entry::Vacant(e) =
+                                        existing.disclosures.entry(digest)
+                                    {
                                         e.insert(record);
                                         merged += 1;
                                     }
@@ -703,7 +707,8 @@ impl TrustRegister {
         stats.rejected_spam += remaining.len();
 
         // Prune any lists that might have been orphaned
-        stats.pruned_orphans = self.prune_unreachable_lists_preserving(direct_sender_canonical.as_deref());
+        stats.pruned_orphans =
+            self.prune_unreachable_lists_preserving(direct_sender_canonical.as_deref());
 
         // Check if effective hops changed for any direct contact
         for (did, old_eff) in prev_effective_hops {

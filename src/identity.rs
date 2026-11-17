@@ -1,5 +1,5 @@
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use crate::error::WotError;
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 
 /// Canonical did:key identifier string (e.g. "did:key:z6Mku...").
 pub type Did = String;
@@ -34,7 +34,10 @@ pub fn canonicalize_did(input: &str) -> Result<Did, WotError> {
         if prefix.is_empty() {
             return Err(WotError::InvalidDid(input.to_string()));
         }
-        if !prefix.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == ':') {
+        if !prefix
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == ':')
+        {
             return Err(WotError::InvalidDid(input.to_string()));
         }
         parts[1]
@@ -62,14 +65,17 @@ pub fn canonicalize_did(input: &str) -> Result<Did, WotError> {
         .try_into()
         .map_err(|_| WotError::InvalidDid(input.to_string()))?;
 
-    let vk = VerifyingKey::from_bytes(&vk_bytes).map_err(|_| WotError::InvalidDid(input.to_string()))?;
+    let vk =
+        VerifyingKey::from_bytes(&vk_bytes).map_err(|_| WotError::InvalidDid(input.to_string()))?;
     if vk.is_weak() {
         return Err(WotError::WeakPublicKey);
     }
 
     let canonical_b58 = bs58::encode(&decoded_bytes).into_string();
     if canonical_b58 != raw_b58 {
-        return Err(WotError::InvalidDid("Non-canonical base58 encoding".to_string()));
+        return Err(WotError::InvalidDid(
+            "Non-canonical base58 encoding".to_string(),
+        ));
     }
 
     Ok(format!("did:key:z{}", canonical_b58))
@@ -90,7 +96,8 @@ pub fn extract_verifying_key(did_or_user_id: &str) -> Result<VerifyingKey, WotEr
         .try_into()
         .map_err(|_| WotError::InvalidDid(did_or_user_id.to_string()))?;
 
-    let vk = VerifyingKey::from_bytes(&vk_bytes).map_err(|_| WotError::InvalidDid(did_or_user_id.to_string()))?;
+    let vk = VerifyingKey::from_bytes(&vk_bytes)
+        .map_err(|_| WotError::InvalidDid(did_or_user_id.to_string()))?;
     if vk.is_weak() {
         return Err(WotError::WeakPublicKey);
     }
