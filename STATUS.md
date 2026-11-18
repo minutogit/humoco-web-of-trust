@@ -1,9 +1,9 @@
 ---
 project: humoco-web-of-trust
-version: "0.2.0"
+version: "0.2.1"
 phase: "active-development"
 health: "green"
-last_updated: "2026-11-17"
+last_updated: "2026-11-18"
 blocks: []
 blocked_by: []
 priority_tasks:

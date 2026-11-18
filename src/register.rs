@@ -10,6 +10,8 @@ use crate::scorer::{TrustEvaluation, evaluate_trust_from_observer, evaluate_trus
 use crate::sd_jwt::{StoredSdJwt, create_and_sign_sd_jwt};
 pub use crate::sync::DropSentRecord;
 
+pub const SHRINK_PROPAGATION_SECS: u64 = 30 * 86_400;
+
 fn default_freshness_grace_secs() -> u64 {
     31_536_000
 }
@@ -91,6 +93,10 @@ pub struct TrustRegister {
     pub drop_sent_log: BTreeMap<String, DropSentRecord>,
     /// Local evaluation and synchronisation policy.
     pub policy: WotPolicy,
+    /// Temporary envelope hop retention when own reach was lowered (0 = inactive).
+    pub shrink_hops: u8,
+    /// Unix timestamp until which `shrink_hops` remains active.
+    pub shrink_until: u64,
     /// Verified provider filter documents providing certified member seals.
     #[serde(default)]
     pub provider_filters: BTreeMap<Did, StoredProviderFilter>,
@@ -112,6 +118,8 @@ impl TrustRegister {
             sent_log: BTreeMap::new(),
             drop_sent_log: BTreeMap::new(),
             policy,
+            shrink_hops: 0,
+            shrink_until: 0,
             provider_filters: BTreeMap::new(),
             graph_cache: RefCell::new(None),
         })
@@ -227,6 +235,24 @@ impl TrustRegister {
             return Err(WotError::InvalidHopLimit(max_hops));
         }
 
+        let prev_signed = self
+            .own_signed_list
+            .as_ref()
+            .map(|l| l.max_hops.min(3))
+            .unwrap_or(0);
+        let active_prev = if now_secs < self.shrink_until {
+            prev_signed.max(self.shrink_hops)
+        } else {
+            prev_signed
+        };
+        if active_prev > max_hops {
+            self.shrink_hops = active_prev;
+            self.shrink_until = now_secs.saturating_add(SHRINK_PROPAGATION_SECS);
+        } else {
+            self.shrink_hops = 0;
+            self.shrink_until = 0;
+        }
+
         self.policy.own_list_max_hops = max_hops;
         // Do NOT shrink max_eval_depth or max_import_depth
         self.policy.max_eval_depth = self.policy.max_eval_depth.max(max_hops.saturating_add(1));
@@ -263,17 +289,26 @@ impl TrustRegister {
 
         let mut contacts = Vec::new();
         for (did, entry) in &self.own_contacts {
-            let eff_hops = self
-                .effective_hops_for_contact(did)
-                .unwrap_or(entry.desired_hops);
+            let eff_hops = if entry.level == 0 {
+                0
+            } else {
+                self.effective_hops_for_contact(did)
+                    .unwrap_or(entry.desired_hops)
+            };
             contacts.push((did.clone(), entry.level, eff_hops));
         }
+
+        let envelope_hops = if now_secs < self.shrink_until {
+            self.policy.own_list_max_hops.max(self.shrink_hops)
+        } else {
+            self.policy.own_list_max_hops
+        };
 
         let (wire_str, stored) = create_and_sign_sd_jwt(
             signer,
             v,
             now_secs,
-            self.policy.own_list_max_hops,
+            envelope_hops,
             &contacts,
         )?;
 

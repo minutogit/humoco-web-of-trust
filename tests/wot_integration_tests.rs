@@ -2459,3 +2459,133 @@ fn test_27_server_offender_list_equivocation_and_delegation() {
         &fuse, &admin_pub
     ));
 }
+
+#[test]
+fn test_reach_shrink_propagates_empty_list_and_blocks_stale_zombie_replay() {
+    let (signer_alice, did_alice) = create_identity();
+    let (signer_bob, did_bob) = create_identity();
+    let (signer_carol, did_carol) = create_identity();
+    let (signer_dave, did_dave) = create_identity();
+    let (signer_zoe, did_zoe) = create_identity();
+
+    let now_secs = 1_700_000_000;
+
+    let mut reg_alice = TrustRegister::new(&did_alice, WotPolicy::default()).unwrap();
+    let mut reg_bob = TrustRegister::new(&did_bob, WotPolicy::default()).unwrap();
+    let mut reg_carol = TrustRegister::new(&did_carol, WotPolicy::default()).unwrap();
+    let mut reg_dave = TrustRegister::new(&did_dave, WotPolicy::default()).unwrap();
+    let mut reg_zoe = TrustRegister::new(&did_zoe, WotPolicy::default()).unwrap();
+
+    for reg in [
+        &mut reg_alice,
+        &mut reg_bob,
+        &mut reg_carol,
+        &mut reg_dave,
+        &mut reg_zoe,
+    ] {
+        reg.set_own_list_max_hops(3, now_secs).unwrap();
+    }
+
+    // Chain: Zoe <-> Alice <-> Bob <-> Carol <-> Dave
+    // Seed forwardable 3-hop peer lists first (matching Tit-for-Tat bootstrap)
+    let (zoe_init, _) =
+        create_and_sign_sd_jwt(&signer_zoe, now_secs, now_secs, 3, &[(did_alice.clone(), 3, 3)])
+            .unwrap();
+    let (bob_init, _) = create_and_sign_sd_jwt(
+        &signer_bob,
+        now_secs,
+        now_secs,
+        3,
+        &[(did_alice.clone(), 3, 3), (did_carol.clone(), 3, 3)],
+    )
+    .unwrap();
+    let (carol_init, _) = create_and_sign_sd_jwt(
+        &signer_carol,
+        now_secs,
+        now_secs,
+        3,
+        &[(did_bob.clone(), 3, 3), (did_dave.clone(), 3, 3)],
+    )
+    .unwrap();
+    let (dave_init, _) =
+        create_and_sign_sd_jwt(&signer_dave, now_secs, now_secs, 3, &[(did_carol.clone(), 3, 3)])
+            .unwrap();
+
+    reg_alice.set_contact_trust(&did_zoe, 3, 3, now_secs).unwrap();
+    reg_alice.set_contact_trust(&did_bob, 3, 3, now_secs).unwrap();
+    reg_alice
+        .import_sync_package(&WotSyncPackage { format_version: 1, lists: vec![zoe_init, bob_init] }, None, now_secs)
+        .unwrap();
+
+    reg_bob.set_contact_trust(&did_alice, 3, 3, now_secs).unwrap();
+    reg_bob.set_contact_trust(&did_carol, 3, 3, now_secs).unwrap();
+    reg_bob
+        .import_sync_package(&WotSyncPackage { format_version: 1, lists: vec![carol_init] }, None, now_secs)
+        .unwrap();
+
+    reg_carol.set_contact_trust(&did_bob, 3, 3, now_secs).unwrap();
+    reg_carol.set_contact_trust(&did_dave, 3, 3, now_secs).unwrap();
+    reg_carol
+        .import_sync_package(&WotSyncPackage { format_version: 1, lists: vec![dave_init] }, None, now_secs)
+        .unwrap();
+
+    reg_dave.set_contact_trust(&did_carol, 3, 3, now_secs).unwrap();
+    reg_zoe.set_contact_trust(&did_alice, 3, 3, now_secs).unwrap();
+
+    let t1 = now_secs + 10;
+    reg_alice.sign_own_list(&signer_alice, t1).unwrap();
+    let (p_ab, _) = reg_alice.prepare_sync_package(Some(&did_bob), None, true).unwrap();
+    reg_bob.import_sync_package(&p_ab, Some(&did_alice), t1).unwrap();
+    reg_bob.sign_own_list(&signer_bob, t1).unwrap();
+
+    let (p_bc, _) = reg_bob.prepare_sync_package(Some(&did_carol), None, true).unwrap();
+    reg_carol.import_sync_package(&p_bc, Some(&did_bob), t1).unwrap();
+    reg_carol.sign_own_list(&signer_carol, t1).unwrap();
+
+    let (p_cd, _) = reg_carol.prepare_sync_package(Some(&did_dave), None, true).unwrap();
+    reg_dave.import_sync_package(&p_cd, Some(&did_carol), t1).unwrap();
+    reg_dave.sign_own_list(&signer_dave, t1).unwrap();
+
+    // Carol and Dave both hold Alice's v1 list disclosing Zoe and evaluate Zoe > 0
+    let stale_v1_pkg = reg_bob
+        .prepare_sync_package(Some(&did_carol), None, true)
+        .unwrap()
+        .0;
+    assert!(!reg_carol.raw_list_store[&did_alice].disclosures.is_empty());
+    assert!(!reg_dave.raw_list_store[&did_alice].disclosures.is_empty());
+    assert!(reg_carol.evaluate_did(&did_zoe, Some(now_secs)).unwrap().score > 0.0);
+    assert!(reg_dave.evaluate_did(&did_zoe, Some(now_secs)).unwrap().score > 0.0);
+
+    // Now Alice shrinks reach 3 -> 1 at t + 60 and re-signs v2
+    let t2 = now_secs + 60;
+    reg_alice.set_own_list_max_hops(1, t2).unwrap();
+    reg_alice.sign_own_list(&signer_alice, t2).unwrap();
+    assert_eq!(reg_alice.own_signed_list.as_ref().unwrap().max_hops, 3);
+
+    // Alice -> Bob -> Carol -> Dave sync
+    let (p_ab2, _) = reg_alice.prepare_sync_package(Some(&did_bob), None, false).unwrap();
+    reg_bob.import_sync_package(&p_ab2, Some(&did_alice), t2).unwrap();
+
+    let (p_bc2, _) = reg_bob.prepare_sync_package(Some(&did_carol), None, false).unwrap();
+    reg_carol.import_sync_package(&p_bc2, Some(&did_bob), t2).unwrap();
+
+    let (p_cd2, _) = reg_carol.prepare_sync_package(Some(&did_dave), None, false).unwrap();
+    reg_dave.import_sync_package(&p_cd2, Some(&did_carol), t2).unwrap();
+
+    // Carol and Dave now hold Alice's v2 empty shell (0 disclosures) and evaluate Zoe at 0.0!
+    assert_eq!(reg_carol.raw_list_store[&did_alice].v, t2);
+    assert!(reg_carol.raw_list_store[&did_alice].disclosures.is_empty());
+    assert_eq!(reg_carol.evaluate_did(&did_zoe, Some(t2)).unwrap().score, 0.0);
+
+    assert_eq!(reg_dave.raw_list_store[&did_alice].v, t2);
+    assert!(reg_dave.raw_list_store[&did_alice].disclosures.is_empty());
+    assert_eq!(reg_dave.evaluate_did(&did_zoe, Some(t2)).unwrap().score, 0.0);
+
+    // Delayed zombie replay of Alice's old v1 package MUST NOT resurrect Zoe at Carol!
+    let zombie_stats = reg_carol
+        .import_sync_package(&stale_v1_pkg, Some(&did_bob), t2 + 10)
+        .unwrap();
+    assert_eq!(zombie_stats.updated, 0);
+    assert!(reg_carol.raw_list_store[&did_alice].disclosures.is_empty());
+    assert_eq!(reg_carol.evaluate_did(&did_zoe, Some(t2 + 10)).unwrap().score, 0.0);
+}
