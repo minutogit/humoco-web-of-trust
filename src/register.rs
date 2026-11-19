@@ -304,13 +304,8 @@ impl TrustRegister {
             self.policy.own_list_max_hops
         };
 
-        let (wire_str, stored) = create_and_sign_sd_jwt(
-            signer,
-            v,
-            now_secs,
-            envelope_hops,
-            &contacts,
-        )?;
+        let (wire_str, stored) =
+            create_and_sign_sd_jwt(signer, v, now_secs, envelope_hops, &contacts)?;
 
         self.own_signed_list = Some(stored);
         self.own_list_dirty = false;
