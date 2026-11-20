@@ -39,7 +39,7 @@ Ein `WotEquivocationProof` wird nur akzeptiert, wenn **alle** folgenden Bedingun
 
 Weil ein Server-Betreiber seinen ephemere Lock-Schlüssel (`lock_pub`) im Fehler- oder Betrugsfall einfach löschen und durch eine neue Installation ersetzen könnte, darf optional die signierte Lock-Delegation des Servers beigelegt werden:
 * Kanonische Signaturnachricht:
-  `"HUMOCO-LOCK-DELEGATE-V1\n<admin_pub_hex>\n<lock_pub_hex>\n<issued_at>"`
+  `"HUMOCO-LOCK-DELEGATE-V1\n<admin_pub_hex>\n<lock_pub_hex>\n<write_url>\n<read_url>\n<issued_at>"`
 * Ist diese Signatur von `admin_pub` gültig und stimmt `delegation.lock_pub == receipt_a.lock_pub`, werden **sowohl `lock_pub` als auch `admin_pub` dauerhaft gesperrt**.
 
 ---

@@ -463,13 +463,23 @@ impl WotEquivocationProof {
     }
 }
 
-/// Signed operator delegation binding `admin_pub` -> `lock_pub` (`HUMOCO-LOCK-DELEGATE-V1`).
+fn is_valid_delegation_url(url: &str) -> bool {
+    !url.is_empty()
+        && url.len() <= 2048
+        && (url.starts_with("https://") || url.starts_with("http://"))
+        && !url.chars().any(|c| c.is_control() || c.is_whitespace())
+}
+
+/// Signed operator delegation binding `admin_pub` -> `lock_pub` and its current locator URLs
+/// (`HUMOCO-LOCK-DELEGATE-V1`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WotLockDelegation {
     #[serde(with = "serde_hex_32")]
     pub admin_pub: [u8; 32],
     #[serde(with = "serde_hex_32")]
     pub lock_pub: [u8; 32],
+    pub write_url: String,
+    pub read_url: String,
     pub issued_at: u64,
     #[serde(with = "serde_hex_64")]
     pub sig: [u8; 64],
@@ -479,16 +489,21 @@ impl WotLockDelegation {
     /// Canonical signing message matching `humoco-sync` `PUT ?lock_delegate`.
     pub fn canonical_message(&self) -> String {
         format!(
-            "{LOCK_DELEGATE_PREFIX}\n{}\n{}\n{}",
+            "{LOCK_DELEGATE_PREFIX}\n{}\n{}\n{}\n{}\n{}",
             encode_hex(&self.admin_pub),
             encode_hex(&self.lock_pub),
+            self.write_url,
+            self.read_url,
             self.issued_at
         )
     }
 
-    /// Strictly verifies non-weak keys, positive timestamp, and `admin_pub` Ed25519 signature.
+    /// Strictly verifies locator URLs, non-weak keys, positive timestamp, and `admin_pub` Ed25519 signature.
     pub fn verify(&self) -> Result<(), WotError> {
-        if self.issued_at == 0 {
+        if self.issued_at == 0
+            || !is_valid_delegation_url(&self.write_url)
+            || !is_valid_delegation_url(&self.read_url)
+        {
             return Err(WotError::InvalidSignature);
         }
         let admin_vk =

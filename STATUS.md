@@ -1,12 +1,18 @@
 ---
 project: humoco-web-of-trust
-version: "0.2.1"
+version: "0.2.2"
 phase: "active-development"
 health: "green"
-last_updated: "2026-11-18"
+last_updated: "2026-11-20"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "WOT-014"
+    title: "5-Field HUMOCO-LOCK-DELEGATE-V1 Relocation-Safe Delegation Alignment"
+    status: "done"
+    priority: "medium"
+    depends_on: ["WOT-013"]
+    description: "Clean-break update of `WotLockDelegation` in `src/successor_and_offenders.rs` and `docs/adr/adr-10-server-sanktionsliste-server-offender-list.md` to sign `(admin_pub, lock_pub, write_url, read_url, issued_at)` in `HUMOCO-LOCK-DELEGATE-V1` so delegation signatures cryptographically bind relocated service endpoints to `lock_pub`. Verified with `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings` (0 warnings), `cargo check --target wasm32-unknown-unknown --offline`, and `34/34` tests (6 unit + 28 integration)."
   - id: "WOT-013"
     title: "ADR-09 KeySuccessorAttestation & ADR-10 ServerOffenderList via EquivocationProof"
     status: "done"

@@ -2359,6 +2359,8 @@ fn test_27_server_offender_list_equivocation_and_delegation() {
     let mut del = WotLockDelegation {
         admin_pub,
         lock_pub,
+        write_url: "https://sync.example.org/sync.php".to_string(),
+        read_url: "https://sync.example.org/d-0001".to_string(),
         issued_at: now_secs - 10,
         sig: [0; 64],
     };
@@ -2435,6 +2437,13 @@ fn test_27_server_offender_list_equivocation_and_delegation() {
     );
     assert!(!list.is_lock_pub_revoked(&lock_pub));
     assert!(!list.is_admin_pub_revoked(&admin_pub));
+
+    let mut bad_url_del = del.clone();
+    bad_url_del.write_url = String::new();
+    bad_url_del.sig = admin_sk
+        .sign(bad_url_del.canonical_message().as_bytes())
+        .to_bytes();
+    assert_eq!(bad_url_del.verify(), Err(WotError::InvalidSignature));
 
     // 3. Valid EquivocationProof + LockDelegation burns BOTH lock_pub & admin_pub
     let valid_rec = ServerOffenderRecord {
