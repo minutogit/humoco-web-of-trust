@@ -3,7 +3,7 @@ project: humoco-web-of-trust
 version: "0.2.2"
 phase: "active-development"
 health: "green"
-last_updated: "2026-11-20"
+last_updated: "2026-11-22"
 blocks: []
 blocked_by: []
 priority_tasks:
@@ -36,7 +36,7 @@ priority_tasks:
     status: "done"
     priority: "high"
     depends_on: ["WOT-005", "WOT-007"]
-    description: "Added `TrustRegister::set_own_list_max_hops` (`own_list_max_hops = 3` default, decoupled `max_eval_depth = 5` / `max_import_depth = 5` preserving guarantor bridges at 1 hop), 1-year grace period + 1-year half-life freshness curve (`freshness_grace_secs = 31_536_000`), `O(N)` `continue`-based sync package packing, pure-Rust safe `BinaryFuse64` signed provider filters (`wot-provider-filter+v1`, $2^{-64}$ anti-grinding false-positive rate, zero new Cargo dependencies) evaluated across both voucher creators and guarantors under Shannon Shared-Edge Factoring, and German `ADR-08` (`docs/adr/adr-08-dienstleister-pruefsiegel-binary-fuse.md`)."
+    description: "Added `TrustRegister::set_own_list_max_hops` (`own_list_max_hops = 2` default, decoupled `max_eval_depth = 5` / `max_import_depth = 5` preserving guarantor bridges at 1 hop), 1-year grace period + 1-year half-life freshness curve (`freshness_grace_secs = 31_536_000`), `O(N)` `continue`-based sync package packing, pure-Rust safe `BinaryFuse64` signed provider filters (`wot-provider-filter+v1`, $2^{-64}$ anti-grinding false-positive rate, zero new Cargo dependencies) evaluated across both voucher creators and guarantors under Shannon Shared-Edge Factoring, and German `ADR-08` (`docs/adr/adr-08-dienstleister-pruefsiegel-binary-fuse.md`)."
   - id: "WOT-005"
     title: "Rust implementation of WoT crate (humoco-wot)"
     status: "done"
@@ -91,20 +91,21 @@ priority_tasks:
 
 ## Current Focus
 
-**Full Core & App Ecosystem Integration, Drop Sync Subpackages, Freshness Prioritization & Provider Seals Completed (`v0.2.0` / `WOT-012`).**
-Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-Rust-Crate (`#![forbid(unsafe_code)]`) vollständig implementiert:
-- **Drop-Sync Freshness Prioritization & Defense-in-Depth Redaction Verification (`WOT-012`)**: Deterministische Frische-Sortierung `(dist ASC, v DESC, issuer ASC)` im `Sent-Log`-Packer gegen Starvation veralteter Listen sowie empfängerseitige Redaktions-Tiefenprüfung (`contact_max_hops < hop_distance`) beim Import (31 Tests: 6 Unit + 25 Integrationstests).
-- **Drop Sync Isolation & Distance-Class Subpackages (`WOT-011`)**: Transportgebundene `Sent-Log`-Isolation (`prepare_drop_sync_subpackages`, `export_drop_sync_subpackage_for_distance_class`), distanzbasierte Subpaket-Aufteilung zur Verhinderung von Mehrleser-Metadatenlecks auf Ablagen, Berechtigtenprüfung unter Ausschluss von Stufe-0-Kontakten und zero neue Cargo-Dependencies (29 Tests: 6 Unit + 23 Integrationstests).
-- **Global Hop Policy & Freshness Decay (`WOT-010`)**: Einstellbare Reichweite `TrustRegister::set_own_list_max_hops` (`own_list_max_hops = 3` Standard, entkoppelt von `max_eval_depth = 5` / `max_import_depth = 5` mit Beibehaltung von 1-Hop-Bürgschaftsbrücken), 1-Jahr-Schonfrist (`freshness_grace_secs = 31_536_000`) plus 1-Jahr-Halbwertszeit-Dämpfungskurve und $O(N)$ `continue`-basiertes Packen in `prepare_sync_package`.
-- **Pure-Rust Safe `BinaryFuse64` Provider Seals (`ADR-08`)**: Signierte Verbands- und Prüfsiegelfilter (`wot-provider-filter+v1`, $2^{-64}$ Falsch-Positiv-Rate gegen Key-Grinding, keine neuen Cargo-Dependencies) zur kompakten Offline-Zertifizierung tausender Erzeuger/Dienstleister unter Shannon-Shared-Edge-Factoring.
-- **Core & App Hooks**: `evaluate_trust_from_observer` / `TrustRegister::evaluate_voucher_for_observer` (für Gravitational Coin Selection `s_wot`) sowie Third-Party-Export-Guard in `prepare_sync_package` integriert in `human-money-core` und `human-money-app` (`APP-044` / `APP-052` / `APP-059`).
+**Full Core & App Ecosystem Integration, Drop Sync Subpackages, Provider Seals, Key Succession & Server Offender Lists Completed (`v0.2.2` / `WOT-014`).**
+The `humoco-wot` crate is implemented as a standalone, WASM-compatible safe-Rust library (`#![forbid(unsafe_code)]`, 34 tests: 6 unit + 28 integration):
+- **Relocation-Safe Server Offender Delegation (`WOT-014`):** Clean-break 5-field `HUMOCO-LOCK-DELEGATE-V1` alignment in `src/successor_and_offenders.rs` and `ADR-10` (`(admin_pub, lock_pub, write_url, read_url, issued_at)`).
+- **Key Succession & Server Sanctions (`WOT-013`, `ADR-09`/`ADR-10`):** Dual-signed acyclic `KeySuccessorAttestation` (`MAX_SUCCESSOR_CHAIN_LEN = 8`) and `ServerOffenderList` (`WotEquivocationProof` + `BinaryFuse64` denylist).
+- **Drop-Sync Freshness Prioritization & Redaction Check (`WOT-012`):** Deterministic `(dist ASC, v DESC, issuer ASC)` packing in `Sent-Log` and recipient-side `contact_max_hops >= hop_distance` verification.
+- **Drop Sync Isolation & Distance-Class Subpackages (`WOT-011`):** Transport-bound `drop_sent_log`, distance-class segregated subpackages (`1..=3`), strict Level-0 exclusion from `authorized_drop_readers`, and zero new Cargo dependencies.
+- **Global Hop Policy, Freshness Decay & Provider Seals (`WOT-010`, `ADR-08`):** `TrustRegister::set_own_list_max_hops` (`1..=3`, default `2`, 30d shrink tombstones, decoupled `max_eval_depth = 5` / `max_import_depth = 5`), `freshness_grace_secs = 31_536_000` + half-life decay, and pure-Rust safe `BinaryFuse64` seals (`wot-provider-filter+v1`).
+- **Core & App Hooks:** `evaluate_trust_from_observer` / `evaluate_voucher_for_observer` and third-party export guard integrated in `human-money-core` and `human-money-app`.
 
 ### MVP Priority Chain
 
 ```
-[WOT-001, WOT-002, WOT-004, WOT-005, WOT-006, WOT-007, WOT-008, WOT-009, WOT-010, WOT-011, WOT-012] (Done ✅)
-    ├── CORE-010 / CORE-011 (Sync Piggybacking, Multi-Recipient Trust Containers & s_wot) [Done ✅]
-    └── APP-044 / APP-052 / APP-059 (Global Reach Selector, TrustBadges, Passwordless .wot, Provider Seals & Drop Sync) [Done ✅]
+[WOT-001..WOT-014] (Done ✅)
+    ├── CORE-010 / CORE-011 / CORE-022 (Sync Piggybacking, .wot Containers, s_wot & Sync-Locks) [Done ✅]
+    └── APP-044 / APP-052 / APP-059 / APP-072 (Reach Selector, TrustBadges, Provider Seals, Drop Sync & Lock Lifecycle) [Done ✅]
 ```
 
 ## Architecture
@@ -138,7 +139,7 @@ Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-
 
 ## Known Issues
 
-- Keine offenen Blocker in `humoco-web-of-trust`. Das Rust-Crate `humoco-wot` (33 Tests: 6 Unit + 27 Integrationstests inkl. Observer-Scoring, Export-Guard, Provider Seals, Drop Subpackages, Freshness Prioritization, Redaction Check, `KeySuccessorAttestation` & `ServerOffenderList`) ist vollständig implementiert und WASM-geprüft.
+- No open blockers in `humoco-web-of-trust`. `humoco-wot` passes all `34` tests (`6` unit + `28` integration) and `wasm32-unknown-unknown` build checks.
 
 ## Recent Milestones
 
@@ -153,12 +154,12 @@ Die Kern-Bibliothek `humoco-wot` ist als eigenständiges, WASM-kompatibles Safe-
 - [x] **WOT-005**: Vollständige Rust-Implementierung des eigenständigen Crates `humoco-wot` (`#![forbid(unsafe_code)]`, WASM-kompatibel, Dual-Storage, 2-Phasen Export, Handschlag-Import, Shannon-Pivoting, Garbage Collection).
 - [x] Erweiterung des WoT-Simulators (`wot-simulation/index.html`) um echten Nadelöhr-Schutz (Shared-Edge Factoring nach ADR-01).
 - [x] **WOT-004 & App/Core-Härtung (2026-10-31)**: `evaluate_trust_from_observer` / `TrustRegister::evaluate_voucher_for_observer` für empfängerorientiertes Coin-Selection-Scoring (`s_wot`), Third-Party-Export-Guard in `prepare_sync_package` für unbewertete/Level-0-Empfänger sowie vollständige UI/UX-Umsetzung des Vertrauens-Ausweises (`<TrustBadge />`) in `human-money-app`.
-- [x] **WOT-010: Global Hop Policy, 1-Year Freshness Grace + Decay & BinaryFuse64 Provider Seals (ADR-08, 2026-11-01)**: Added `TrustRegister::set_own_list_max_hops` (`own_list_max_hops = 3` default, decoupled `max_eval_depth = 5` / `max_import_depth = 5` preserving guarantor bridges at 1 hop), 1-year grace period + 1-year half-life freshness curve (`freshness_grace_secs = 31_536_000`), `O(N)` `continue`-based sync package packing, pure-Rust safe `BinaryFuse64` signed provider filters (`wot-provider-filter+v1`, $2^{-64}$ anti-grinding false-positive rate, zero new Cargo dependencies) evaluated across both voucher creators and guarantors under Shannon Shared-Edge Factoring, and German `ADR-08` (`docs/adr/adr-08-dienstleister-pruefsiegel-binary-fuse.md`).
+- [x] **WOT-010: Global Hop Policy, 1-Year Freshness Grace + Decay & BinaryFuse64 Provider Seals (ADR-08, 2026-11-01)**: Added `TrustRegister::set_own_list_max_hops` (`own_list_max_hops` default `2`, decoupled `max_eval_depth = 5` / `max_import_depth = 5` preserving guarantor bridges at 1 hop), 1-year grace period + 1-year half-life freshness curve (`freshness_grace_secs = 31_536_000`), `O(N)` `continue`-based sync package packing, pure-Rust safe `BinaryFuse64` signed provider filters (`wot-provider-filter+v1`, $2^{-64}$ anti-grinding false-positive rate, zero new Cargo dependencies) evaluated across both voucher creators and guarantors under Shannon Shared-Edge Factoring, and German `ADR-08` (`docs/adr/adr-08-dienstleister-pruefsiegel-binary-fuse.md`).
 - [x] **WOT-011: Sent-Log Transport Binding & Distance-Class Subpackages for Drop Sync (2026-11-08)**: Transportgebundene `Sent-Log`-Isolation (`prepare_drop_sync_subpackages`, `export_drop_sync_subpackage_for_distance_class`), distanzbasierte Subpaket-Aufteilung zur Verhinderung von Mehrleser-Metadatenlecks auf Ablagen, Berechtigtenprüfung unter Ausschluss von Stufe-0-Kontakten und zero neue Cargo-Dependencies (29 Tests: 6 Unit + 23 Integrationstests passing).
 - [x] **WOT-012: Drop-Sync Freshness Prioritization & Defense-in-Depth Redaction Verification (2026-11-15)**: Sortierung nach `(dist ASC, v DESC, issuer ASC)` im `Sent-Log`-Packer gegen Starvation alter Listen sowie empfängerseitige Redaktions-Tiefenprüfung (`contact_max_hops < hop_distance`) beim Import (`test_24`, `test_25`; 31 Tests: 6 Unit + 25 Integrationstests passing, `clippy` 0 Warnings).
 - [x] **WOT-013: `KeySuccessorAttestation` (`ADR-09`) & `ServerOffenderList` (`ADR-10`, 2026-11-17)**: Spezifikation und `#![forbid(unsafe_code)]`/WASM-Implementierung von `KeySuccessorAttestation` (Dual-Signatur, Zyklus-/8-Hop-Schutz) und `ServerOffenderList` (`EquivocationProof` + `HUMOCO-LOCK-DELEGATE-V1` + `BinaryFuse64`-Sperrfilter; `test_26`, `test_27`; 33 Tests: 6 Unit + 27 Integrationstests passing, `clippy` 0 Warnings, `wasm32-unknown-unknown` grün).
+- [x] **WOT-014: 5-Field `HUMOCO-LOCK-DELEGATE-V1` Alignment (2026-11-20)**: Updated `WotLockDelegation` and `ADR-10` for relocation-safe delegation binding (`34/34` tests passing).
 
 ## Next Milestones
 
-- [ ] **CORE-002 / APP-003 (Post-MVP)**: Optionaler BLE/NFC Stranger-Discovery-Handschlag vor Ort
-- [ ] Optionale Zero-Trust-Relay-Anbindung für asynchronen SD-JWT-Austausch ohne direkten Dateitransfer
+- [ ] **CORE-002 / APP-003 (Post-MVP)**: Optional BLE/NFC Stranger-Discovery handshake
