@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, HashSet};
 use crate::error::WotError;
 use crate::graph::EgoGraphCache;
 use crate::identity::{Did, WotSigner, canonicalize_did};
-use crate::provider_filter::{StoredProviderFilter, parse_and_verify_provider_filter};
+use crate::provider_filter::{
+    SignedProviderFilter, StoredProviderFilter, parse_and_verify_provider_filter,
+};
 use crate::scorer::{TrustEvaluation, evaluate_trust_from_observer, evaluate_trust_with_providers};
 use crate::sd_jwt::{StoredSdJwt, create_and_sign_sd_jwt};
 pub use crate::sync::DropSentRecord;
@@ -385,11 +387,20 @@ impl TrustRegister {
                     iss, parsed.payload.v, existing.payload.v
                 )));
             }
-            if parsed.payload.v == existing.payload.v && parsed.raw_json != existing.raw_json {
-                return Err(WotError::EquivocationDetected {
-                    issuer: iss.clone(),
-                    version: parsed.payload.v,
-                });
+            if parsed.payload.v == existing.payload.v {
+                let is_equivocation = match (
+                    serde_json::from_str::<SignedProviderFilter>(&parsed.raw_json),
+                    serde_json::from_str::<SignedProviderFilter>(&existing.raw_json),
+                ) {
+                    (Ok(inc), Ok(ex)) => inc.payload_b64 != ex.payload_b64,
+                    _ => parsed.payload != existing.payload,
+                };
+                if is_equivocation {
+                    return Err(WotError::EquivocationDetected {
+                        issuer: iss.clone(),
+                        version: parsed.payload.v,
+                    });
+                }
             }
             existing.local_trust_level
         } else {

@@ -16,6 +16,30 @@ pub const PROVIDER_FILTER_TYP: &str = "wot-provider-filter+v1";
 /// Maximum raw payload size allowed for provider filters (8 MB).
 pub const MAX_PROVIDER_FILTER_RAW_LEN: usize = 8 * 1024 * 1024;
 
+/// Maximum number of keys accepted by [`BinaryFuse64::build`].
+const MAX_BINARY_FUSE_KEYS: usize = 10_000_000;
+
+fn is_valid_fuse_params(
+    segment_length: u32,
+    segment_length_mask: u32,
+    segment_count_length: u32,
+    fingerprints_len: usize,
+) -> bool {
+    if fingerprints_len == 0 {
+        return segment_length == 0 && segment_length_mask == 0 && segment_count_length == 0;
+    }
+    if !segment_length.is_power_of_two() || segment_length_mask != segment_length - 1 {
+        return false;
+    }
+    if segment_count_length == 0 || !segment_count_length.is_multiple_of(segment_length) {
+        return false;
+    }
+    segment_length
+        .checked_mul(2)
+        .and_then(|two| segment_count_length.checked_add(two))
+        .is_some_and(|expected| expected as usize == fingerprints_len)
+}
+
 /// MurmurHash3 64-bit finalizer / mixer.
 #[inline]
 pub fn mix64(mut h: u64) -> u64 {
@@ -78,13 +102,19 @@ pub struct BinaryFuse64 {
 
 impl BinaryFuse64 {
     /// Builds a 64-bit binary fuse filter for the provided key slice.
-    /// Handles 0 keys (empty), tiny sets (1..64), and large sets (up to 100,000+).
+    /// Handles 0 keys (empty), tiny sets (1..64), and large sets (up to 10,000,000).
     pub fn build(keys: &[u64]) -> Result<Self, WotError> {
         let mut unique_keys = keys.to_vec();
         unique_keys.sort_unstable();
         unique_keys.dedup();
 
         let size = unique_keys.len();
+        if size > MAX_BINARY_FUSE_KEYS {
+            return Err(WotError::LimitExceeded(format!(
+                "BinaryFuse64 key count {} exceeds maximum {}",
+                size, MAX_BINARY_FUSE_KEYS
+            )));
+        }
         if size == 0 {
             return Ok(Self {
                 seed: 0,
@@ -99,20 +129,17 @@ impl BinaryFuse64 {
             (32u32, 2u32)
         } else {
             let arity = 3u32;
-            let mut seg_len = 1u32 << (((size as f64).ln() / 3.33_f64.ln() + 2.25).floor() as u32);
-            seg_len = seg_len.clamp(32, 262_144);
+            let exp = (((size as f64).ln() / 3.33_f64.ln() + 2.25).floor() as u32).clamp(5, 18);
+            let mut seg_len = 1u32 << exp;
             let size_factor =
                 (0.875 + 0.25 * (1_000_000.0_f64.ln()) / (size as f64).ln()).max(1.125);
-            let capacity = ((size as f64) * size_factor).round() as u32;
-            while seg_len > 256 && capacity.div_ceil(seg_len) < 32 + (arity - 1) {
+            let capacity = ((size as f64) * size_factor).ceil() as u32;
+            let mut init_segment_count = capacity.div_ceil(seg_len).max(arity);
+            while seg_len > 32 && init_segment_count < arity + 1 {
                 seg_len /= 2;
+                init_segment_count = capacity.div_ceil(seg_len).max(arity);
             }
-            let init_segment_count = capacity.div_ceil(seg_len) - (arity - 1);
-            let seg_cnt = if init_segment_count < arity {
-                1
-            } else {
-                init_segment_count - (arity - 1)
-            };
+            let seg_cnt = init_segment_count - (arity - 1);
             (seg_len, seg_cnt)
         };
 
@@ -229,7 +256,14 @@ impl BinaryFuse64 {
     /// Checks if a 64-bit key is present in the filter with negligible (~2^-64) false positive rate.
     #[inline]
     pub fn contains(&self, key: u64) -> bool {
-        if self.fingerprints.is_empty() || self.segment_length == 0 {
+        if self.fingerprints.is_empty()
+            || !is_valid_fuse_params(
+                self.segment_length,
+                self.segment_length_mask,
+                self.segment_count_length,
+                self.fingerprints.len(),
+            )
+        {
             return false;
         }
         let (h0, h1, h2) = get_hashes(
@@ -241,9 +275,14 @@ impl BinaryFuse64 {
         );
         let fp = mix64(key);
         let fp = if fp == 0 { 1 } else { fp };
-        let actual = self.fingerprints[h0 as usize]
-            ^ self.fingerprints[h1 as usize]
-            ^ self.fingerprints[h2 as usize];
+        let (Some(&f0), Some(&f1), Some(&f2)) = (
+            self.fingerprints.get(h0 as usize),
+            self.fingerprints.get(h1 as usize),
+            self.fingerprints.get(h2 as usize),
+        ) else {
+            return false;
+        };
+        let actual = f0 ^ f1 ^ f2;
         actual == fp
     }
 
@@ -277,6 +316,16 @@ impl BinaryFuse64 {
         let mut fingerprints = Vec::with_capacity(bytes.len() / 8);
         for chunk in bytes.chunks_exact(8) {
             fingerprints.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+        }
+        if !is_valid_fuse_params(
+            encoded.segment_length,
+            encoded.segment_length_mask,
+            encoded.segment_count_length,
+            fingerprints.len(),
+        ) {
+            return Err(WotError::Serialization(
+                "Invalid BinaryFuse64 filter parameters".to_string(),
+            ));
         }
         Ok(Self {
             seed: encoded.seed,
@@ -445,6 +494,11 @@ pub fn parse_and_verify_provider_filter(
     }
 
     let canonical_iss = canonicalize_did(&payload.iss)?;
+    if canonical_iss != payload.iss {
+        return Err(WotError::InvalidDid(
+            "Provider filter issuer DID not in canonical form".to_string(),
+        ));
+    }
     let vk = extract_verifying_key(&canonical_iss)?;
 
     // Strict signature verification over payload_b64

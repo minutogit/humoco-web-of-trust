@@ -116,7 +116,7 @@ impl EgoGraphCache {
     /// Computes the shortest distance in hops from node 0 (`self_did`) to all reachable nodes.
     pub fn shortest_distances_from_self(&self) -> HashMap<u32, u8> {
         let mut distances = HashMap::new();
-        let mut queue = VecDeque::new();
+        let mut queue: VecDeque<(u32, u8)> = VecDeque::new();
 
         distances.insert(0, 0);
         queue.push_back((0, 0));
@@ -125,7 +125,7 @@ impl EgoGraphCache {
             if (curr as usize) < self.outgoing.len() {
                 for edge in &self.outgoing[curr as usize] {
                     if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(edge.to) {
-                        let next_dist = dist + 1;
+                        let next_dist = dist.saturating_add(1);
                         e.insert(next_dist);
                         queue.push_back((edge.to, next_dist));
                     }

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
 
 use crate::error::WotError;
 use crate::graph::{EgoGraphCache, level_to_factor};
@@ -143,7 +143,7 @@ pub fn exact_path_union_prob(paths: &[Vec<usize>], edge_probs: &[f64], depth: us
     let mut best_edge = 0;
     let mut max_count = 0;
     for (&e, &cnt) in &edge_counts {
-        if cnt > max_count {
+        if cnt > max_count || (cnt == max_count && e < best_edge) {
             max_count = cnt;
             best_edge = e;
         }
@@ -445,7 +445,8 @@ fn evaluate_trust_internal(
             if let Some(existing_prob) = edge_prob_map.get_mut(&key) {
                 if gw > *existing_prob {
                     *existing_prob = gw;
-                    edge_level_map.insert(key, 3);
+                    edge_level_map.insert(key.clone(), 3);
+                    edge_iat_map.remove(&key);
                 }
             } else {
                 eval_graph.add_or_update_edge(g_node_id, creator_node_id, 3, now_secs.unwrap_or(0));
@@ -455,113 +456,178 @@ fn evaluate_trust_internal(
         }
     }
 
-    // DFS path exploration from start_node_id to creator_node_id
-    let mut raw_paths: Vec<RawPath> = Vec::new();
-    let mut visited: HashSet<u32> = HashSet::new();
-    visited.insert(start_node_id);
+    // Reverse-BFS reachability from creator_node_id + bounded Best-First Search (prevents Sybil-clique DFS DoS)
+    const MAX_SEARCH_EXPANSIONS: usize = 8_192;
+    const MAX_HEAP_STATES: usize = 32_768;
 
-    struct DfsContext<'a> {
-        eval_graph: &'a EgoGraphCache,
-        edge_prob_map: &'a HashMap<EdgeKey, f64>,
-        edge_iat_map: &'a HashMap<EdgeKey, u64>,
-        edge_level_map: &'a HashMap<EdgeKey, u8>,
-        target: u32,
-        max_depth: u8,
+    let num_nodes = eval_graph.outgoing.len();
+    let mut rev_adj: Vec<Vec<u32>> = vec![Vec::new(); num_nodes];
+    for edges in &eval_graph.outgoing {
+        for edge in edges {
+            let key = EdgeKey {
+                from: edge.from,
+                to: edge.to,
+            };
+            if edge_prob_map.get(&key).copied().unwrap_or(0.0) >= MIN_PATH_PROBABILITY
+                && (edge.to as usize) < num_nodes
+            {
+                rev_adj[edge.to as usize].push(edge.from);
+            }
+        }
     }
 
-    struct PathState {
+    let mut min_hops_to_target = vec![u8::MAX; num_nodes];
+    if (creator_node_id as usize) < num_nodes {
+        let mut bfs_q = VecDeque::new();
+        min_hops_to_target[creator_node_id as usize] = 0;
+        bfs_q.push_back(creator_node_id);
+        while let Some(node) = bfs_q.pop_front() {
+            let next_d = min_hops_to_target[node as usize].saturating_add(1);
+            for &prev in &rev_adj[node as usize] {
+                if (prev as usize) < num_nodes && min_hops_to_target[prev as usize] == u8::MAX {
+                    min_hops_to_target[prev as usize] = next_d;
+                    bfs_q.push_back(prev);
+                }
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    struct SearchState {
+        prob: f64,
         nodes: Vec<u32>,
         levels: Vec<u8>,
         edge_keys: Vec<EdgeKey>,
     }
 
-    fn dfs(
-        curr: u32,
-        current_prob: f64,
-        ctx: &DfsContext<'_>,
-        visited: &mut HashSet<u32>,
-        state: &mut PathState,
-        raw_paths: &mut Vec<RawPath>,
-    ) {
-        if curr == ctx.target {
-            if current_prob >= MIN_PATH_PROBABILITY {
-                let mut oldest_iat: Option<u64> = None;
-                for k in &state.edge_keys {
-                    if let Some(&iat) = (k.from != 0).then(|| ctx.edge_iat_map.get(k)).flatten() {
-                        oldest_iat = Some(match oldest_iat {
-                            None => iat,
-                            Some(prev) => prev.min(iat),
-                        });
+    impl PartialEq for SearchState {
+        fn eq(&self, other: &Self) -> bool {
+            self.prob.total_cmp(&other.prob) == std::cmp::Ordering::Equal
+                && self.nodes == other.nodes
+        }
+    }
+
+    impl Eq for SearchState {}
+
+    impl Ord for SearchState {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.prob
+                .total_cmp(&other.prob)
+                .then_with(|| other.nodes.len().cmp(&self.nodes.len()))
+                .then_with(|| other.nodes.cmp(&self.nodes))
+        }
+    }
+
+    impl PartialOrd for SearchState {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    let mut raw_paths: Vec<RawPath> = Vec::new();
+    let max_depth = policy.max_eval_depth as usize;
+
+    if (start_node_id as usize) < num_nodes
+        && min_hops_to_target[start_node_id as usize] != u8::MAX
+        && (min_hops_to_target[start_node_id as usize] as usize) <= max_depth
+    {
+        let mut heap = BinaryHeap::new();
+        heap.push(SearchState {
+            prob: 1.0,
+            nodes: vec![start_node_id],
+            levels: Vec::new(),
+            edge_keys: Vec::new(),
+        });
+
+        let mut expansions = 0usize;
+        while let Some(state) = heap.pop() {
+            let curr = *state
+                .nodes
+                .last()
+                .expect("SearchState always has >= 1 node");
+            if curr == creator_node_id {
+                if state.prob >= MIN_PATH_PROBABILITY {
+                    let mut oldest_iat: Option<u64> = None;
+                    for k in &state.edge_keys {
+                        if let Some(&iat) = (k.from != 0).then(|| edge_iat_map.get(k)).flatten() {
+                            oldest_iat = Some(match oldest_iat {
+                                None => iat,
+                                Some(prev) => prev.min(iat),
+                            });
+                        }
+                    }
+
+                    raw_paths.push(RawPath {
+                        node_ids: state.nodes,
+                        edge_levels: state.levels,
+                        edge_keys: state.edge_keys,
+                        prob_product: state.prob,
+                        oldest_iat,
+                    });
+                    if raw_paths.len() >= MAX_CANDIDATE_PATHS {
+                        break;
                     }
                 }
-
-                raw_paths.push(RawPath {
-                    node_ids: state.nodes.clone(),
-                    edge_levels: state.levels.clone(),
-                    edge_keys: state.edge_keys.clone(),
-                    prob_product: current_prob,
-                    oldest_iat,
-                });
+                continue;
             }
-            return;
-        }
 
-        if state.nodes.len() > ctx.max_depth as usize {
-            return;
-        }
+            expansions += 1;
+            if expansions > MAX_SEARCH_EXPANSIONS {
+                break;
+            }
 
-        if (curr as usize) < ctx.eval_graph.outgoing.len() {
-            for edge in &ctx.eval_graph.outgoing[curr as usize] {
-                if !visited.contains(&edge.to) {
+            let hops_so_far = state.nodes.len() - 1;
+            if hops_so_far >= max_depth {
+                continue;
+            }
+
+            if (curr as usize) < eval_graph.outgoing.len() {
+                for edge in &eval_graph.outgoing[curr as usize] {
+                    let to_idx = edge.to as usize;
+                    let rem = if to_idx < min_hops_to_target.len() {
+                        min_hops_to_target[to_idx]
+                    } else {
+                        u8::MAX
+                    };
+                    if rem == u8::MAX || hops_so_far + 1 + (rem as usize) > max_depth {
+                        continue;
+                    }
+                    if state.nodes.contains(&edge.to) {
+                        continue;
+                    }
+
                     let key = EdgeKey {
                         from: edge.from,
                         to: edge.to,
                     };
-                    let p = ctx.edge_prob_map.get(&key).copied().unwrap_or(0.0);
-                    let next_prob = current_prob * p;
+                    let p = edge_prob_map.get(&key).copied().unwrap_or(0.0);
+                    let next_prob = state.prob * p;
                     if next_prob >= MIN_PATH_PROBABILITY {
-                        visited.insert(edge.to);
-                        state.nodes.push(edge.to);
-                        state
-                            .levels
-                            .push(ctx.edge_level_map.get(&key).copied().unwrap_or(edge.level));
-                        state.edge_keys.push(key);
+                        let mut next_nodes = state.nodes.clone();
+                        next_nodes.push(edge.to);
+                        let mut next_levels = state.levels.clone();
+                        next_levels.push(edge_level_map.get(&key).copied().unwrap_or(edge.level));
+                        let mut next_keys = state.edge_keys.clone();
+                        next_keys.push(key);
 
-                        dfs(edge.to, next_prob, ctx, visited, state, raw_paths);
-
-                        state.edge_keys.pop();
-                        state.levels.pop();
-                        state.nodes.pop();
-                        visited.remove(&edge.to);
+                        heap.push(SearchState {
+                            prob: next_prob,
+                            nodes: next_nodes,
+                            levels: next_levels,
+                            edge_keys: next_keys,
+                        });
                     }
                 }
             }
+
+            if heap.len() >= MAX_HEAP_STATES {
+                let mut drained: Vec<SearchState> = heap.drain().collect();
+                drained.sort_unstable_by(|a, b| b.cmp(a));
+                drained.truncate(MAX_HEAP_STATES / 2);
+                heap = BinaryHeap::from(drained);
+            }
         }
     }
-
-    let ctx = DfsContext {
-        eval_graph: &eval_graph,
-        edge_prob_map: &edge_prob_map,
-        edge_iat_map: &edge_iat_map,
-        edge_level_map: &edge_level_map,
-        target: creator_node_id,
-        max_depth: policy.max_eval_depth,
-    };
-
-    let mut state = PathState {
-        nodes: vec![start_node_id],
-        levels: Vec::new(),
-        edge_keys: Vec::new(),
-    };
-
-    dfs(
-        start_node_id,
-        1.0,
-        &ctx,
-        &mut visited,
-        &mut state,
-        &mut raw_paths,
-    );
 
     if raw_paths.is_empty() {
         return Ok(TrustEvaluation {

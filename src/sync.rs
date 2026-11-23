@@ -96,6 +96,9 @@ impl ImportStats {
 
 /// Helper to quickly inspect the unverified issuer DID from an SD-JWT payload.
 pub fn peek_unverified_issuer(raw_sd_jwt: &str) -> Option<Did> {
+    if raw_sd_jwt.len() > crate::sd_jwt::MAX_SD_JWT_RAW_LEN {
+        return None;
+    }
     let jws = raw_sd_jwt.split('~').next()?;
     let payload_b64 = jws.split('.').nth(1)?;
     let bytes = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
@@ -647,6 +650,11 @@ impl TrustRegister {
                         stats.rejected_crypto += 1;
                     }
                     Ok((iss, mut new_stored)) => {
+                        if new_stored.max_hops < hop_dist {
+                            stats.rejected_spam += 1;
+                            continue;
+                        }
+
                         // Discard under-redacted disclosures whose contact_max_hops is smaller than issuer's hop distance
                         new_stored
                             .disclosures
@@ -663,20 +671,33 @@ impl TrustRegister {
                                 stats.updated += 1;
                                 progress = true;
                             } else if new_stored.v == existing.v {
-                                // Same JWS body: union-merge disclosures
+                                // Same JWS body: union-merge disclosures while rejecting duplicate target DIDs under distinct digests
+                                let mut existing_targets: std::collections::HashSet<Did> = existing
+                                    .disclosures
+                                    .values()
+                                    .map(|d| d.target_did.clone())
+                                    .collect();
                                 let mut merged = 0;
+                                let mut duplicate_target_conflict = false;
                                 for (digest, record) in new_stored.disclosures {
                                     if let std::collections::btree_map::Entry::Vacant(e) =
                                         existing.disclosures.entry(digest)
                                     {
+                                        if !existing_targets.insert(record.target_did.clone()) {
+                                            duplicate_target_conflict = true;
+                                            continue;
+                                        }
                                         e.insert(record);
                                         merged += 1;
                                     }
                                 }
+                                if duplicate_target_conflict {
+                                    stats.rejected_crypto += 1;
+                                }
                                 if merged > 0 {
                                     stats.merged += merged;
                                     progress = true;
-                                } else {
+                                } else if !duplicate_target_conflict {
                                     stats.skipped_unchanged += 1;
                                 }
                             } else {

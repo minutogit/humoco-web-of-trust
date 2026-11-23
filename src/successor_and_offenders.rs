@@ -275,6 +275,13 @@ impl KeySuccessorAttestation {
 
     /// Strictly verifies DIDs, clock skew, non-weak keys, and BOTH Ed25519 signatures.
     pub fn verify(&self, now_secs: u64) -> Result<(), WotError> {
+        let can_old = canonicalize_did(&self.old_did)?;
+        let can_new = canonicalize_did(&self.new_did)?;
+        if can_old != self.old_did || can_new != self.new_did {
+            return Err(WotError::InvalidDid(
+                "KeySuccessorAttestation DIDs must be in canonical form".to_string(),
+            ));
+        }
         if self.rotated_at > now_secs.saturating_add(MAX_CLOCK_SKEW_SECS) {
             return Err(WotError::FutureTimestamp {
                 claim_secs: self.rotated_at,
@@ -453,7 +460,8 @@ impl WotEquivocationProof {
             });
         }
         if self.receipt_a.slot != self.receipt_b.slot
-            || self.receipt_a.child_lock == self.receipt_b.child_lock
+            || (self.receipt_a.child_lock == self.receipt_b.child_lock
+                && self.receipt_a.entry_hash == self.receipt_b.entry_hash)
         {
             return Err(WotError::InvalidSignature);
         }

@@ -3,10 +3,16 @@ project: humoco-web-of-trust
 version: "0.2.2"
 phase: "active-development"
 health: "green"
-last_updated: "2026-11-22"
+last_updated: "2026-11-23"
 blocks: []
 blocked_by: []
 priority_tasks:
+  - id: "WOT-015"
+    title: "Security & Correctness Audit Hardening + Property-Based Test Suite"
+    status: "done"
+    priority: "high"
+    depends_on: ["WOT-014"]
+    description: "Full crate security/mutation audit (`778` baseline mutants + `588` targeted verification mutants) and remediation: `BinaryFuse64` sizing & malformed-parameter panic/DoS protection, `WotEquivocationProof::verify` `entry_hash`-only alignment with `humoco-proto`, `KeySuccessorAttestation::verify` & `parse_and_verify_provider_filter` canonical DID enforcement, idempotent `import_provider_filter` `payload_b64` equivocation check, `scorer.rs` reverse-BFS + bounded Best-First Search against Sybil-clique DFS DoS, deterministic pivot tie-break & stale-`iat` clearing on guarantor upgrade, `sync.rs` envelope `max_hops`/union-merge target dedup/`peek_unverified_issuer` bounds, saturating graph BFS distances, and `49/49` passing tests (`6` unit + `28` integration + `15` audit/KAT/`proptest` suites)."
   - id: "WOT-014"
     title: "5-Field HUMOCO-LOCK-DELEGATE-V1 Relocation-Safe Delegation Alignment"
     status: "done"
@@ -91,8 +97,9 @@ priority_tasks:
 
 ## Current Focus
 
-**Full Core & App Ecosystem Integration, Drop Sync Subpackages, Provider Seals, Key Succession & Server Offender Lists Completed (`v0.2.2` / `WOT-014`).**
-The `humoco-wot` crate is implemented as a standalone, WASM-compatible safe-Rust library (`#![forbid(unsafe_code)]`, 34 tests: 6 unit + 28 integration):
+**Full Core & App Ecosystem Integration, Drop Sync Subpackages, Provider Seals, Key Succession, Server Offender Lists & Security Hardening Completed (`v0.2.2` / `WOT-015`).**
+The `humoco-wot` crate is implemented as a standalone, WASM-compatible safe-Rust library (`#![forbid(unsafe_code)]`, `49` tests: `6` unit + `28` integration + `15` audit/property tests):
+- **Security & Correctness Audit Hardening (`WOT-015`):** Hardened `BinaryFuse64` sizing/decode validation, `scorer.rs` bounded Best-First Search & deterministic tie-breaking, `WotEquivocationProof` `entry_hash` parity with `humoco-proto`, canonical DID verification in `KeySuccessorAttestation`/`ProviderFilter`, `import_sync_package` bounds/dedup, and `proptest!` + KAT coverage.
 - **Relocation-Safe Server Offender Delegation (`WOT-014`):** Clean-break 5-field `HUMOCO-LOCK-DELEGATE-V1` alignment in `src/successor_and_offenders.rs` and `ADR-10` (`(admin_pub, lock_pub, write_url, read_url, issued_at)`).
 - **Key Succession & Server Sanctions (`WOT-013`, `ADR-09`/`ADR-10`):** Dual-signed acyclic `KeySuccessorAttestation` (`MAX_SUCCESSOR_CHAIN_LEN = 8`) and `ServerOffenderList` (`WotEquivocationProof` + `BinaryFuse64` denylist).
 - **Drop-Sync Freshness Prioritization & Redaction Check (`WOT-012`):** Deterministic `(dist ASC, v DESC, issuer ASC)` packing in `Sent-Log` and recipient-side `contact_max_hops >= hop_distance` verification.
@@ -139,7 +146,7 @@ The `humoco-wot` crate is implemented as a standalone, WASM-compatible safe-Rust
 
 ## Known Issues
 
-- No open blockers in `humoco-web-of-trust`. `humoco-wot` passes all `34` tests (`6` unit + `28` integration) and `wasm32-unknown-unknown` build checks.
+- No open blockers in `humoco-web-of-trust`. `humoco-wot` passes all `49` tests (`6` unit + `28` integration + `15` audit/property tests) and `wasm32-unknown-unknown` build checks.
 
 ## Recent Milestones
 
@@ -159,6 +166,7 @@ The `humoco-wot` crate is implemented as a standalone, WASM-compatible safe-Rust
 - [x] **WOT-012: Drop-Sync Freshness Prioritization & Defense-in-Depth Redaction Verification (2026-11-15)**: Sortierung nach `(dist ASC, v DESC, issuer ASC)` im `Sent-Log`-Packer gegen Starvation alter Listen sowie empfängerseitige Redaktions-Tiefenprüfung (`contact_max_hops < hop_distance`) beim Import (`test_24`, `test_25`; 31 Tests: 6 Unit + 25 Integrationstests passing, `clippy` 0 Warnings).
 - [x] **WOT-013: `KeySuccessorAttestation` (`ADR-09`) & `ServerOffenderList` (`ADR-10`, 2026-11-17)**: Spezifikation und `#![forbid(unsafe_code)]`/WASM-Implementierung von `KeySuccessorAttestation` (Dual-Signatur, Zyklus-/8-Hop-Schutz) und `ServerOffenderList` (`EquivocationProof` + `HUMOCO-LOCK-DELEGATE-V1` + `BinaryFuse64`-Sperrfilter; `test_26`, `test_27`; 33 Tests: 6 Unit + 27 Integrationstests passing, `clippy` 0 Warnings, `wasm32-unknown-unknown` grün).
 - [x] **WOT-014: 5-Field `HUMOCO-LOCK-DELEGATE-V1` Alignment (2026-11-20)**: Updated `WotLockDelegation` and `ADR-10` for relocation-safe delegation binding (`34/34` tests passing).
+- [x] **WOT-015: Audit Hardening, Mutation & Property-Based Verification (2026-11-23)**: Remediated `BinaryFuse64` sizing/decode bounds, `scorer.rs` Sybil-clique DFS DoS & determinism, `WotEquivocationProof` `entry_hash` parity, `KeySuccessorAttestation`/provider canonical DIDs, and sync import hardening (`49/49` tests passing, `clippy` 0 warnings, `wasm32` green).
 
 ## Next Milestones
 

@@ -120,10 +120,7 @@ pub fn encode_disclosure(
         ));
     }
     let salt_b64 = URL_SAFE_NO_PAD.encode(salt_bytes);
-    let json_str = format!(
-        "[\"{}\",\"{}\",{},{}]",
-        salt_b64, target_did, level, contact_max_hops
-    );
+    let json_str = serde_json::to_string(&(&salt_b64, target_did, level, contact_max_hops))?;
     let raw_b64 = URL_SAFE_NO_PAD.encode(json_str.as_bytes());
     let digest = compute_digest128(&raw_b64);
     Ok((raw_b64, digest))
