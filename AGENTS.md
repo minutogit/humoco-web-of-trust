@@ -34,3 +34,4 @@ You are the **HuMoCo Web of Trust Architect & Developer**, maintaining `humoco-w
 - `src/`: `lib.rs`, `error.rs`, `identity.rs`, `sd_jwt.rs`, `graph.rs`, `scorer.rs`, `register.rs`, `sync.rs`, `provider_filter.rs`, `successor_and_offenders.rs` | Tests: `tests/wot_integration_tests.rs` | Simulator: `wot-simulation/index.html`.
 - Deep API reference: load skill **`wot-architecture`**; keep [`STATUS.md`](STATUS.md) synced.
 - **Gates:** `cargo fmt --all -- --check` · `cargo clippy --all-targets -- -D warnings` · `cargo test` · `cargo check --target wasm32-unknown-unknown`
+- **Test & Diff Integrity:** For scoring/crypto/sync diffs, run `cargo mutants --in-diff <diff> --offline` (when installed) or verify a Revert-Red check; assert exact error variants + metamorphic/positive controls (no bare `.is_err()` or hollowed existing tests).
